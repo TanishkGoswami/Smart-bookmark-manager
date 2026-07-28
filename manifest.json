@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Smart Bookmark Manager",
+  "version": "1.0.0",
+  "description": "A visual, organized bookmark manager with drag-and-drop boards and quick save.",
+  "action": {
+    "default_popup": "index.html"
+  },
+  "chrome_url_overrides": {
+    "newtab": "index.html"
+  },
+  "permissions": [
+    "bookmarks",
+    "storage",
+    "tabs"
+  ],
+  "icons": {
+    "16": "logo.png",
+    "48": "logo.png",
+    "128": "logo.png"
+  }
+}
