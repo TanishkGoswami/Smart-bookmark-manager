@@ -11,6 +11,7 @@
   },
   "permissions": [
     "bookmarks",
+    "search",
     "storage",
     "tabs"
   ],

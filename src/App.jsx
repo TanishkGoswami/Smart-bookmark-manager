@@ -65,6 +65,11 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
   const [privacyBoardId, setPrivacyBoardId] = useState(null);
+
+  const closeSearch = () => {
+    setIsSearchOpen(false);
+    setSearchQuery('');
+  };
   
   // Navigation Tabs State
   const [activeTab, setActiveTab] = useState('Home');
@@ -222,11 +227,19 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') closeSearch();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, []);
+
   // Responsive Masonry Columns
   useEffect(() => {
     const handleResize = () => {
       const width = window.innerWidth;
-      if (width < 640) setNumCols(1);
+      if (width < 640) setNumCols(2);
       else if (width < 900) setNumCols(2);
       else if (width < 1200) setNumCols(3);
       else if (width < 1600) setNumCols(4);
@@ -1017,10 +1030,12 @@ function App() {
   // Filter columns based on search
   const displayColumns = Object.keys(columns).reduce((acc, colId) => {
     const col = columns[colId];
-    let visibleBookmarks = col.bookmarks.filter(b => 
-      (b.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
-      (b.url || '').toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    let visibleBookmarks = isSearchOpen && searchQuery.trim()
+      ? col.bookmarks.filter(b =>
+          (b.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (b.url || '').toLowerCase().includes(searchQuery.toLowerCase())
+        )
+      : col.bookmarks;
     if (uiSettings.hideExtraBookmarks && visibleBookmarks.length > 8) {
       visibleBookmarks = visibleBookmarks.slice(0, 8);
     }
@@ -1030,6 +1045,18 @@ function App() {
     };
     return acc;
   }, {});
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const searchMatches = normalizedSearchQuery
+    ? Object.values(columns).flatMap(board =>
+        board.bookmarks
+          .filter(bookmark =>
+            (bookmark.title || '').toLowerCase().includes(normalizedSearchQuery) ||
+            (bookmark.url || '').toLowerCase().includes(normalizedSearchQuery)
+          )
+          .map(bookmark => ({ ...bookmark, boardTitle: board.title }))
+      )
+    : [];
+  const searchResultCount = searchMatches.length;
   const modalText = isDark ? 'text-[#f8f9fa]' : 'text-[#1c2b36]';
   const modalSubText = isDark ? 'text-slate-400' : 'text-slate-500';
   const inputBg = isDark ? 'bg-black/20' : 'bg-white/40';
@@ -1040,7 +1067,7 @@ function App() {
     ? mixHex(styleSettings.primaryColor, '#22070a', 42)
     : mixHex(styleSettings.primaryColor, '#f5f1ee', 18);
   const toolbarButtons = [
-    { icon: Search, id: 'search', title: 'Search bookmarks', onClick: () => { setIsSearchOpen(!isSearchOpen); if (isSearchOpen) setSearchQuery(''); } },
+    { icon: Search, id: 'search', title: 'Search bookmarks', isActive: isSearchOpen, onClick: () => setIsSearchOpen(true) },
     { icon: Download, id: 'download', title: 'Import bookmarks', isActive: isImportMenuOpen, onClick: () => setIsImportMenuOpen(!isImportMenuOpen) },
     { icon: VenetianMask, id: 'incognito', title: isIncognito ? 'Disable incognito open' : 'Open bookmarks incognito', isActive: isIncognito, onClick: () => setIsIncognito(!isIncognito) },
     { icon: LayoutDashboard, id: 'dashboard', title: 'Open dashboard', onClick: () => setIsDashboardOpen(true) },
@@ -1061,8 +1088,29 @@ function App() {
   const boardJustifyContent = boardAlignmentOptions.find(option => option.value === uiSettings.boardAlignment)?.justifyContent || 'start';
   const boardGapPx = uiSettings.compactMode ? 16 : 24;
   const boardAreaWidth = (numCols * 220) + (Math.max(numCols - 1, 0) * boardGapPx);
-  const isMobileLayout = numCols === 1;
+  const isMobileLayout = typeof window !== 'undefined' && window.innerWidth < 640;
   const trashBookmarks = trashBoardId && columns[trashBoardId] ? columns[trashBoardId].bookmarks : [];
+
+  const openSearchUrl = (url) => {
+    if (!url) return;
+    closeSearch();
+    if (uiSettings.openLinksInNewTab) {
+      window.open(url, '_blank', 'noreferrer');
+    } else {
+      window.location.href = url;
+    }
+  };
+
+  const handleBrowserSearch = () => {
+    const text = searchQuery.trim();
+    if (!text) return;
+    closeSearch();
+    if (typeof chrome !== 'undefined' && chrome.search?.query) {
+      chrome.search.query({ text, disposition: uiSettings.openLinksInNewTab ? 'NEW_TAB' : 'CURRENT_TAB' });
+      return;
+    }
+    openSearchUrl(`https://www.google.com/search?q=${encodeURIComponent(text)}`);
+  };
 
   const renderToolButton = (btn, motionStyle = {}) => (
     <div
@@ -1319,26 +1367,6 @@ function App() {
             </div>
           )}
           
-          {isSearchOpen && (
-            <div className="ml-4 flex-1 max-w-md animate-in fade-in slide-in-from-left-4 duration-300 relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                <Search size={16} strokeWidth={2.5} />
-              </div>
-              <input 
-                type="text"
-                autoFocus
-                placeholder="Search bookmarks..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 rounded-2xl outline-none text-sm font-semibold border-[0.5px] shadow-lg backdrop-blur-xl transition-all"
-                style={{ 
-                  backgroundColor: isDark ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.6)', 
-                  color: isDark ? '#ffffff' : '#1a1a1a',
-                  borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'
-                }}
-              />
-            </div>
-          )}
         </div>
         <div
           className="mb-4 h-[2px] w-full shrink-0 rounded-full sm:mb-7"
@@ -1355,8 +1383,8 @@ function App() {
         <DragDropContext onDragStart={() => setIsDraggingAny(true)} onDragEnd={onDragEnd}>
           <div
             data-testid="board-canvas"
-            className={`grid w-full ${uiSettings.compactMode ? 'gap-4' : 'gap-6'} flex-1 items-start overflow-hidden pb-24 sm:pb-8 min-h-0 no-scrollbar`}
-            style={{ gridTemplateColumns: isMobileLayout ? 'minmax(0, min(240px, 100%))' : `repeat(${numCols}, 220px)`, justifyContent: isMobileLayout ? 'start' : boardJustifyContent }}
+            className={`grid w-full ${uiSettings.compactMode ? 'gap-2.5 sm:gap-4' : 'gap-3 sm:gap-6'} flex-1 items-start overflow-hidden pb-24 sm:pb-8 min-h-0 no-scrollbar`}
+            style={{ gridTemplateColumns: isMobileLayout ? 'repeat(2, minmax(0, 1fr))' : `repeat(${numCols}, 220px)`, justifyContent: isMobileLayout ? 'start' : boardJustifyContent }}
           >
             {(() => {
               const { layout } = getActiveLayoutInfo();
@@ -1364,7 +1392,7 @@ function App() {
               <Droppable key={colIndex} droppableId={`masonry-col-${colIndex}`} direction="vertical" type="board">
                 {(laneProvided, _laneSnapshot) => (
                   <div 
-                    className="group flex w-full min-w-0 flex-col gap-4 items-start rounded-xl transition-colors sm:w-[220px] sm:min-w-[220px]"
+                    className="group flex w-full min-w-0 flex-col gap-3 items-start rounded-xl transition-colors sm:w-[220px] sm:min-w-[220px] sm:gap-4"
                     {...laneProvided.droppableProps}
                     ref={laneProvided.innerRef}
                   >
@@ -1381,7 +1409,7 @@ function App() {
                                 data-testid="board-card"
                                 onMouseEnter={() => isPrivacyMode && setPrivacyBoardId(column.id)}
                                 onMouseLeave={() => isPrivacyMode && setPrivacyBoardId(null)}
-                                className={`group/board w-full max-h-[calc(100vh-180px)] shrink-0 select-none flex flex-col sm:w-[220px] sm:max-h-[800px] ${uiSettings.compactMode ? 'gap-1 px-2.5 py-2 sm:gap-1.5 sm:px-3 sm:py-3' : 'gap-1.5 px-2.5 py-2.5 sm:gap-2.5 sm:px-3.5 sm:pt-3.5 sm:pb-1.5'} rounded-[10px] transition-shadow relative ${boardSnapshot.isDragging ? 'shadow-2xl z-50 cursor-grabbing opacity-95' : ''} ${activeMenuBoardId === column.id ? 'z-[70]' : ''}`}
+                                className={`group/board w-full max-h-[calc(100vh-180px)] shrink-0 select-none flex flex-col sm:w-[220px] sm:max-h-[800px] ${uiSettings.compactMode ? 'gap-1 px-1.5 py-1.5 sm:gap-1.5 sm:px-3 sm:py-3' : 'gap-1 px-1.5 py-1.5 sm:gap-2.5 sm:px-3.5 sm:pt-3.5 sm:pb-1.5'} rounded-[10px] transition-shadow relative ${boardSnapshot.isDragging ? 'shadow-2xl z-50 cursor-grabbing opacity-95' : ''} ${activeMenuBoardId === column.id ? 'z-[70]' : ''}`}
                                 style={{ 
                                   ...boardProvided.draggableProps.style,
                                   backgroundColor: hexToRgba(styleSettings.boardColor, isMobileLayout ? Math.min(styleSettings.boardOpacity, 72) : styleSettings.boardOpacity),
@@ -1406,7 +1434,7 @@ function App() {
                                     >
                                       
                                       {/* Column Header & Actions */}
-                                      <div className={`flex items-center justify-between gap-2 ${uiSettings.compactMode ? 'mb-1.5' : 'mb-2'}`}>
+                                      <div className={`flex min-h-7 items-center justify-between gap-1 ${uiSettings.compactMode ? 'mb-0.5' : 'mb-1'} sm:min-h-0 sm:gap-2 sm:mb-2`}>
                                         <div
                                           {...boardProvided.dragHandleProps}
                                           className="flex min-w-0 flex-1 cursor-grab touch-none items-center gap-1.5 rounded-md active:cursor-grabbing"
@@ -1428,7 +1456,7 @@ function App() {
                                               style={{ color: isDark ? '#ffffff' : '#1e293b' }}
                                             />
                                           ) : (
-                                            <div className="min-w-0 truncate text-[13px] font-medium sm:text-[15px] sm:font-semibold" style={{ color: isDark ? '#ffffff' : '#1e293b' }}>
+                                            <div className="min-w-0 truncate text-[11px] font-medium leading-4 sm:text-[15px] sm:font-semibold" style={{ color: isDark ? '#ffffff' : '#1e293b' }}>
                                               {column.title}
                                             </div>
                                           )}
@@ -1440,23 +1468,23 @@ function App() {
                                               setActiveInlineAddBoardId(activeInlineAddBoardId === column.id ? null : column.id);
                                               setInlineInputValue('');
                                             }}
-                                            className="p-1.5 rounded-lg transition-colors"
+                                            className="rounded-lg p-1 transition-colors sm:p-1.5"
                                             style={{ color: isDark ? '#e2e8f0' : '#475569', backgroundColor: activeInlineAddBoardId === column.id ? hexToRgba(styleSettings.primaryColor, 30) : 'transparent' }}
                                           >
-                                            <Link2 size={16} strokeWidth={2.5}/>
+                                            <Link2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={2.5}/>
                                           </button>
                                           <button 
                                             onMouseDown={(e) => e.stopPropagation()}
                                             onClick={() => setActiveMenuBoardId(activeMenuBoardId === column.id ? null : column.id)}
-                                            className="board-menu-trigger p-1.5 rounded-lg hover:bg-black/10 transition-colors"
+                                            className="board-menu-trigger rounded-lg p-1 transition-colors hover:bg-black/10 sm:p-1.5"
                                             style={{ color: isDark ? '#e2e8f0' : '#475569' }}
                                           >
-                                            <MoreVertical size={16} strokeWidth={2.5}/>
+                                            <MoreVertical className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={2.5}/>
                                           </button>
                                         </div>
                                       </div>
 
-                                      <div className={`${uiSettings.compactMode ? 'mb-1 sm:mb-2' : 'mb-1.5 sm:mb-3'} h-px w-full`} style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }}></div>
+                                      <div className={`${uiSettings.compactMode ? 'mb-0.5 sm:mb-2' : 'mb-1 sm:mb-3'} h-px w-full`} style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }}></div>
 
                                         <div className={`flex-1 flex flex-col ${uiSettings.compactMode ? 'gap-0' : 'gap-0.5'} relative`}>
                                           {displayColumns[column.id].bookmarks.map((bookmark, idx) => (
@@ -1466,7 +1494,7 @@ function App() {
                                                 ref={bookmarkProvided.innerRef}
                                                 {...bookmarkProvided.draggableProps}
                                                 {...bookmarkProvided.dragHandleProps}
-                                                className={`group/bookmark relative flex items-center gap-1.5 px-1 py-0.5 sm:gap-2 ${uiSettings.compactMode ? 'sm:py-1 sm:px-1.5' : 'sm:py-1.5 sm:px-2'} rounded-lg select-none transition-colors ${
+                                                className={`group/bookmark relative flex touch-none items-center gap-1 px-0.5 py-0.5 sm:gap-2 ${uiSettings.compactMode ? 'sm:py-1 sm:px-1.5' : 'sm:py-1.5 sm:px-2'} rounded-lg select-none transition-colors ${
                                                   bookmarkSnapshot.isDragging ? 'z-50 shadow-xl bg-white/15 dark:bg-white/15 cursor-grabbing' : 'cursor-grab hover:bg-black/5 active:cursor-grabbing dark:hover:bg-white/10'
                                                 }`}
                                               >
@@ -1517,7 +1545,7 @@ function App() {
                                                       onError={(e) => handleFaviconError(e, bookmark.url)}
                                                       alt=""
                                                       draggable={false}
-                                                      className="h-[18px] w-[18px] shrink-0 rounded-[4px] bg-white/10 object-contain sm:h-[20px] sm:w-[20px]"
+                                                      className="h-4 w-4 shrink-0 rounded-[4px] bg-white/10 object-contain sm:h-[20px] sm:w-[20px]"
                                                     />
                                                     <a 
                                                       href={bookmark.url} 
@@ -1535,7 +1563,7 @@ function App() {
                                                           }
                                                         }
                                                       }}
-                                                      className={`text-[11.5px] sm:text-[13px] font-[400] transition-all flex-1 min-w-0 tracking-wide group-hover/bookmark:pr-14 ${isDark ? 'text-white/80 hover:text-white' : 'text-slate-700 hover:text-black'}`}
+                                                      className={`text-[10.5px] font-[400] transition-all flex-1 min-w-0 sm:text-[13px] sm:group-hover/bookmark:pr-14 ${isDark ? 'text-white/80 hover:text-white' : 'text-slate-700 hover:text-black'}`}
                                                     >
                                                       <span className={uiSettings.shortenLongTitles ? 'block truncate' : 'block break-words leading-snug'}>
                                                         {cleanTitle(bookmark.title)}
@@ -1648,11 +1676,11 @@ function App() {
                       })}
                     {laneProvided.placeholder}
                     {/* Render the ADD BOARD button for EVERY column */}
-                    <div className="mt-2 w-full shrink-0 sm:w-[220px]">
+                    <div className="mt-1 w-full shrink-0 sm:mt-2 sm:w-[220px]">
                       {activeAddBoardColIndex !== colIndex ? (
                         <button 
                           onClick={() => { setCategoryInput(''); setActiveAddBoardColIndex(colIndex); }}
-                          className="flex w-full items-center justify-center gap-2 rounded-[10px] border border-dashed py-2.5 text-[12px] font-semibold opacity-80 transition-all hover:bg-black/5 focus:opacity-100 dark:hover:bg-white/5 sm:border-[1.5px] sm:py-4 sm:text-[13px] sm:opacity-0 sm:group-hover:opacity-100 sm:hover:opacity-100"
+                          className="flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-dashed py-2 text-[10.5px] font-semibold opacity-75 transition-all hover:bg-black/5 focus:opacity-100 dark:hover:bg-white/5 sm:gap-2 sm:border-[1.5px] sm:py-4 sm:text-[13px] sm:opacity-0 sm:group-hover:opacity-100 sm:hover:opacity-100"
                           style={{ 
                             borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
                             color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
@@ -1783,6 +1811,84 @@ function App() {
           <ImageIcon size={19} strokeWidth={2.2} />
         </button>
       </div>
+
+      {isSearchOpen && (
+        <div
+          className="fixed inset-0 z-[95] flex items-start justify-center bg-black/35 px-4 pt-[18vh] backdrop-blur-md sm:items-center sm:pt-0"
+          onMouseDown={closeSearch}
+        >
+          <div
+            className="w-full max-w-[560px] rounded-[10px] border p-2 shadow-2xl"
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: isDark ? hexToRgba(styleSettings.boardColor, 92) : hexToRgba(styleSettings.boardColor, 96),
+              borderColor: isDark ? hexToRgba(styleSettings.primaryColor, 55) : 'rgba(0,0,0,0.10)',
+              backdropFilter: `blur(${Math.max(styleSettings.boardBlur, 16)}px) saturate(160%)`,
+              WebkitBackdropFilter: `blur(${Math.max(styleSettings.boardBlur, 16)}px) saturate(160%)`
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-[8px] ${isDark ? 'bg-white/10 text-white/80' : 'bg-black/5 text-slate-600'}`}>
+                <Search size={18} strokeWidth={2.3} />
+              </div>
+              <input
+                autoFocus
+                type="search"
+                placeholder="Search bookmarks..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleBrowserSearch();
+                  if (e.key === 'Escape') closeSearch();
+                }}
+                className="min-w-0 flex-1 bg-transparent text-[15px] font-medium outline-none placeholder:text-current placeholder:opacity-45"
+                style={{ color: isDark ? '#ffffff' : '#1e293b' }}
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-[8px] transition-colors ${isDark ? 'text-white/70 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-black/5 hover:text-slate-900'}`}
+                  title="Clear search"
+                >
+                  <X size={17} strokeWidth={2.4} />
+                </button>
+              )}
+            </div>
+            <div className={`px-12 pb-1 pt-1.5 text-[11px] font-medium ${modalSubText}`}>
+              {searchQuery ? `${searchResultCount} bookmark${searchResultCount === 1 ? '' : 's'} found` : 'Type title or URL to filter your boards'}
+            </div>
+            {normalizedSearchQuery && (
+              <div className="mt-1 overflow-hidden rounded-[8px]">
+                {searchMatches.slice(0, 5).map(bookmark => (
+                  <button
+                    key={bookmark.id}
+                    onClick={() => openSearchUrl(bookmark.url)}
+                    className={`flex w-full items-center gap-2.5 px-2.5 py-2 text-left transition-colors ${isDark ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}
+                  >
+                    <img
+                      src={getFaviconUrl(bookmark.url)}
+                      onError={(e) => handleFaviconError(e, bookmark.url)}
+                      alt=""
+                      className="h-5 w-5 shrink-0 rounded-[4px]"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className={`block truncate text-[13px] font-medium ${modalText}`}>{cleanTitle(bookmark.title)}</span>
+                      <span className={`block truncate text-[10.5px] ${modalSubText}`}>{bookmark.boardTitle} - {getBookmarkHost(bookmark.url)}</span>
+                    </span>
+                  </button>
+                ))}
+                <button
+                  onClick={handleBrowserSearch}
+                  className={`flex w-full items-center gap-2.5 border-t px-2.5 py-2.5 text-left transition-colors ${isDark ? 'border-white/10 text-white hover:bg-white/10' : 'border-black/10 text-slate-800 hover:bg-black/5'}`}
+                >
+                  <Globe2 size={18} strokeWidth={2.1} className="shrink-0" />
+                  <span className="min-w-0 truncate text-[13px] font-semibold">Search web for "{searchQuery.trim()}"</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* General Settings Modal */}
       {isSettingsOpen && (
