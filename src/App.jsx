@@ -6,6 +6,13 @@ import {
   VenetianMask, LayoutDashboard, Trash2, Eye, Settings,
   MoreVertical, Link2, ExternalLink, RefreshCw, Pencil, Share2
 } from 'lucide-react'
+import {
+  DEFAULT_STYLE_SETTINGS,
+  cleanBookmarkTitle,
+  getFaviconUrl,
+  hasChromeApi,
+  hexToRgba,
+} from './lib/bookmarkUtils'
 
 const fac = new FastAverageColor();
 
@@ -17,13 +24,7 @@ function App() {
   const [numCols, setNumCols] = useState(4);
   
   // Dynamic Styles State
-  const [styleSettings, setStyleSettings] = useState({
-    primaryColor: '#8a2b34',
-    boardColor: '#a18b8c',
-    boardOpacity: 85,
-    boardBlur: 24,
-    isDarkBg: true
-  });
+  const [styleSettings, setStyleSettings] = useState(DEFAULT_STYLE_SETTINGS);
 
   const fileInputRef = useRef(null);
 
@@ -62,26 +63,7 @@ function App() {
   const [isTrashOpen, setIsTrashOpen] = useState(false);
   const [trashBoardId, setTrashBoardId] = useState(null);
 
-  // Clean title logic
-  const cleanTitle = (title) => {
-    if (!title) return '';
-    let cleaned = title;
-    if (cleaned.startsWith('http') || cleaned.includes('://')) {
-      try {
-        const urlObj = new URL(cleaned.startsWith('http') ? cleaned : 'https://' + cleaned);
-        cleaned = urlObj.hostname;
-      } catch (e) {}
-    }
-    cleaned = cleaned.replace(/^www\./i, '');
-    const tldRegex = /\.(com|in|org|net|co|io|dev|app|edu|gov|us|uk)$/i;
-    if (tldRegex.test(cleaned)) {
-      cleaned = cleaned.replace(tldRegex, '');
-    }
-    if (!cleaned.includes(' ') && cleaned.length > 0) {
-      cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-    }
-    return cleaned;
-  };
+  const cleanTitle = cleanBookmarkTitle;
 
   // Stats calculation
   const getTotalBookmarks = () => Object.values(columns).reduce((acc, col) => acc + col.bookmarks.length, 0);
@@ -127,7 +109,7 @@ function App() {
   // Load bookmarks and settings
   useEffect(() => {
     loadBookmarks();
-    if (typeof chrome !== 'undefined' && chrome.storage) {
+    if (hasChromeApi('storage')) {
       chrome.storage.local.get(['wallpaper', 'styleSettings', 'boardTabs', 'tabs', 'boardLayout2D'], (result) => {
         if (result.wallpaper) setWallpaper(result.wallpaper);
         if (result.styleSettings) setStyleSettings(result.styleSettings);
@@ -151,14 +133,14 @@ function App() {
 
   const saveStyleSettings = (newSettings) => {
     setStyleSettings(newSettings);
-    if (typeof chrome !== 'undefined' && chrome.storage) {
+    if (hasChromeApi('storage')) {
       chrome.storage.local.set({ styleSettings: newSettings });
     }
   };
 
   useEffect(() => {
     if (loading) return;
-    if (typeof chrome === 'undefined' || !chrome.bookmarks) {
+    if (!hasChromeApi('bookmarks')) {
       if (Object.keys(columns).length > 0) {
         window.localStorage.setItem('mock_columns', JSON.stringify(columns));
         window.localStorage.setItem('mock_columnOrder', JSON.stringify(columnOrder));
@@ -168,7 +150,7 @@ function App() {
 
   useEffect(() => {
     if (loading) return;
-    if (typeof chrome === 'undefined' || !chrome.storage) {
+    if (!hasChromeApi('storage')) {
       window.localStorage.setItem('mock_boardTabs', JSON.stringify(boardTabs));
       window.localStorage.setItem('mock_tabs', JSON.stringify(tabs));
       window.localStorage.setItem('mock_boardLayout2D', JSON.stringify(boardLayout2D));
@@ -178,7 +160,7 @@ function App() {
   }, [boardTabs, tabs, boardLayout2D, styleSettings, wallpaper, loading]);
 
   const loadBookmarks = () => {
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.getTree((tree) => {
         const rootNodes = tree[0]?.children || [];
         const bookmarksBar = rootNodes.find(n => n.id === "1") || rootNodes[0];
@@ -282,12 +264,7 @@ function App() {
       });
     }
 
-    let shortestColIndex = 0;
-    for (let i = 1; i < numCols; i++) {
-      if (layout[i].length < layout[shortestColIndex].length) shortestColIndex = i;
-    }
-    
-    return { layout, shortestColIndex };
+    return { layout };
   };
 
   const onDragEnd = (result) => {
@@ -317,7 +294,7 @@ function App() {
           }
         };
         setBoardLayout2D(newBoardLayout2D);
-        if (typeof chrome !== 'undefined' && chrome.storage) {
+        if (hasChromeApi('storage')) {
           chrome.storage.local.set({ boardLayout2D: newBoardLayout2D });
         }
         
@@ -332,7 +309,7 @@ function App() {
         }
         setColumnOrder(newGlobalOrder);
         
-        if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+        if (hasChromeApi('bookmarks')) {
           flatLayout.forEach((id) => {
              chrome.bookmarks.move(id, { parentId: "1", index: newGlobalOrder.indexOf(id) });
           });
@@ -356,7 +333,7 @@ function App() {
       [destination.droppableId]: { ...destCol, bookmarks: destBookmarks },
     });
 
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.move(draggableId, {
         parentId: destination.droppableId,
         index: destination.index
@@ -368,7 +345,7 @@ function App() {
     if (tabInput && tabInput.trim() && !tabs.includes(tabInput.trim())) {
       const newTabs = [...tabs, tabInput.trim()];
       setTabs(newTabs);
-      if (typeof chrome !== 'undefined' && chrome.storage) {
+      if (hasChromeApi('storage')) {
         chrome.storage.local.set({ tabs: newTabs });
       }
       setActiveTab(tabInput.trim());
@@ -388,7 +365,7 @@ function App() {
         
         const newBoardTabs = { ...boardTabs, [newFolderId]: activeTab };
         setBoardTabs(newBoardTabs);
-        if (typeof chrome !== 'undefined' && chrome.storage) {
+        if (hasChromeApi('storage')) {
           chrome.storage.local.set({ boardTabs: newBoardTabs });
         }
 
@@ -404,13 +381,13 @@ function App() {
             }
           };
           setBoardLayout2D(newBoardLayout2D);
-          if (typeof chrome !== 'undefined' && chrome.storage) {
+          if (hasChromeApi('storage')) {
             chrome.storage.local.set({ boardLayout2D: newBoardLayout2D });
           }
         }
       };
 
-      if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.create({ parentId: bookmarksBarId, title: categoryInput }, (newFolder) => {
           processNewBoard(newFolder.id, newFolder.title);
         });
@@ -424,7 +401,7 @@ function App() {
 
   const handleDeleteBoard = (id) => {
     if (id === "1") return;
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.removeTree(id, () => {
         const newCols = { ...columns };
         delete newCols[id];
@@ -445,7 +422,7 @@ function App() {
       let url = inlineInputValue.trim();
       if (!url.startsWith('http')) url = 'https://' + url;
 
-      if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.create({ parentId: boardId, url: url, title: cleanTitle(url) }, (newBm) => {
           setColumns({
             ...columns,
@@ -468,7 +445,7 @@ function App() {
     const bm = columns[boardId].bookmarks.find(b => b.id === bmId);
     
     if (trashBoardId) {
-      if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.move(bmId, { parentId: trashBoardId }, () => {
           setColumns({
             ...columns,
@@ -484,7 +461,7 @@ function App() {
         });
       }
     } else {
-      if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.create({ parentId: "1", title: "[Trash]" }, (newFolder) => {
           setTrashBoardId(newFolder.id);
           chrome.bookmarks.move(bmId, { parentId: newFolder.id }, () => {
@@ -509,7 +486,7 @@ function App() {
 
   const handleRestoreBookmark = (bmId) => {
     const bm = columns[trashBoardId].bookmarks.find(b => b.id === bmId);
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.move(bmId, { parentId: "1" }, () => {
         setColumns({
           ...columns,
@@ -529,7 +506,7 @@ function App() {
   };
 
   const handlePermanentDeleteBookmark = (bmId) => {
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.remove(bmId, () => {
         setColumns({
           ...columns,
@@ -546,7 +523,7 @@ function App() {
 
   const handleEmptyTrash = () => {
     if (!trashBoardId || !columns[trashBoardId] || columns[trashBoardId].bookmarks.length === 0) return;
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.removeTree(trashBoardId, () => {
         const newCols = { ...columns };
         delete newCols[trashBoardId];
@@ -563,7 +540,7 @@ function App() {
 
   const handleSaveEditBookmark = (boardId) => {
     if (editUrlValue.trim() && editTitleValue.trim()) {
-      if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.update(editingBookmarkId, { title: editTitleValue, url: editUrlValue }, (updatedBm) => {
           setColumns({
             ...columns,
@@ -602,24 +579,22 @@ function App() {
               boardColor: color.isDark ? '#2A2C31' : '#FFFFFF',
               isDarkBg: color.isDark
             });
-            if (typeof chrome !== 'undefined' && chrome.storage) {
+            if (hasChromeApi('storage')) {
               chrome.storage.local.set({ wallpaper: base64 });
             }
             // Auto open settings when a new wallpaper is uploaded
             setIsSettingsOpen(true);
           })
-          .catch(e => console.error(e));
+          .catch(() => {
+            saveStyleSettings({
+              ...styleSettings,
+              boardColor: DEFAULT_STYLE_SETTINGS.boardColor,
+            });
+            setIsSettingsOpen(true);
+          });
       };
       reader.readAsDataURL(file);
     }
-  };
-
-  const hexToRgba = (hex, opacity) => {
-    if (!hex || hex.length !== 7) return `rgba(255, 255, 255, ${opacity / 100})`;
-    let r = parseInt(hex.slice(1, 3), 16),
-        g = parseInt(hex.slice(3, 5), 16),
-        b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${opacity / 100})`;
   };
 
   if (loading) return null;
@@ -749,9 +724,9 @@ function App() {
 
         {/* Kanban Board Container (Now Draggable!) */}
         <DragDropContext onDragEnd={onDragEnd}>
-          <div className="flex gap-6 overflow-y-auto pb-8 items-start flex-1 min-h-0 no-scrollbar pr-8">
+          <div data-testid="board-layout" className="flex gap-6 overflow-y-auto pb-8 items-start flex-1 min-h-0 no-scrollbar pr-8">
             {(() => {
-              const { layout, shortestColIndex } = getActiveLayoutInfo();
+              const { layout } = getActiveLayoutInfo();
               return layout.map((colIds, colIndex) => (
               <Droppable key={colIndex} droppableId={`masonry-col-${colIndex}`} direction="vertical" type="board">
                 {(provided) => (
@@ -769,6 +744,7 @@ function App() {
                               <div 
                                 ref={provided.innerRef} 
                                 {...provided.draggableProps} 
+                                data-testid="bookmark-board"
                                 className={`group/board w-[220px] max-h-[800px] shrink-0 flex flex-col gap-2.5 rounded-[10px] px-3.5 pt-3.5 pb-1.5 transition-all relative ${snapshot.isDragging ? 'shadow-2xl scale-105 z-50 ring-1 ring-white/30' : ''}`}
                                 style={{ 
                                   backgroundColor: hexToRgba(styleSettings.boardColor, styleSettings.boardOpacity),
@@ -843,7 +819,7 @@ function App() {
                                                 ) : (
                                                   <>
                                                     <img 
-                                                      src={`https://www.google.com/s2/favicons?domain=${bookmark.url ? new URL(bookmark.url).hostname : 'localhost'}&sz=64`}
+                                                      src={getFaviconUrl(bookmark.url, 64)}
                                                       alt=""
                                                       className="w-[20px] h-[20px] rounded-[4px] shrink-0 bg-transparent object-contain"
                                                     />
@@ -852,7 +828,7 @@ function App() {
                                                       onClick={(e) => {
                                                         if (isIncognito) {
                                                           e.preventDefault();
-                                                          if (typeof chrome !== 'undefined' && chrome.windows) {
+                                                          if (hasChromeApi('windows')) {
                                                             chrome.windows.create({ url: bookmark.url, incognito: true });
                                                           } else {
                                                             alert('Incognito mode requires Chrome Extension API. Opening normally in new tab.');
@@ -1149,7 +1125,7 @@ function App() {
                 columns[trashBoardId].bookmarks.map(bm => (
                   <div key={bm.id} className={`${inputBg} ${inputBorder} p-3 rounded-xl border flex items-center justify-between`}>
                     <div className="flex items-center gap-3 overflow-hidden">
-                      <img src={`https://www.google.com/s2/favicons?domain=${bm.url ? new URL(bm.url).hostname : 'localhost'}&sz=32`} className="w-5 h-5 rounded shrink-0" alt=""/>
+                      <img src={getFaviconUrl(bm.url, 32)} className="w-5 h-5 rounded shrink-0" alt=""/>
                       <span className={`text-[13px] font-semibold truncate ${modalText}`}>{bm.title}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
