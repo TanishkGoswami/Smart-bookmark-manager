@@ -4,6 +4,7 @@ export const DEFAULT_STYLE_SETTINGS = {
   boardOpacity: 85,
   boardBlur: 24,
   isDarkBg: true,
+  wallpaperFit: 'cover',
 }
 
 export const hasChromeApi = (apiName) =>
@@ -58,3 +59,22 @@ export const hexToRgba = (hex, opacity) => {
 
   return `rgba(${r}, ${g}, ${b}, ${opacity / 100})`
 }
+export const mixHex = (hex, fallback, amount = 50) => {
+  if (!hex || hex.length !== 7) return fallback;
+  const target = fallback.replace('#', '');
+  const source = hex.replace('#', '');
+  const mix = (i) => {
+    const a = parseInt(source.slice(i, i + 2), 16);
+    const b = parseInt(target.slice(i, i + 2), 16);
+    return Math.round((a * amount + b * (100 - amount)) / 100).toString(16).padStart(2, '0');
+  };
+  return `#${mix(0)}${mix(2)}${mix(4)}`;
+};
+
+import { AlignLeft, AlignCenter, AlignRight, AlignJustify } from 'lucide-react';
+export const boardAlignmentOptions = [
+  { value: 'start', label: 'Left', icon: AlignLeft, justifyContent: 'start' },
+  { value: 'center', label: 'Center', icon: AlignCenter, justifyContent: 'center' },
+  { value: 'end', label: 'Right', icon: AlignRight, justifyContent: 'end' },
+  { value: 'space-between', label: 'Spread', icon: AlignJustify, justifyContent: 'space-between' },
+];

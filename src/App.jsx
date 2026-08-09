@@ -5,8 +5,9 @@ import {
   Search, Plus, Image as ImageIcon, Download, 
   VenetianMask, LayoutDashboard, Trash2, Eye, Settings,
   MoreVertical, Menu, Link2, ExternalLink, RefreshCw, Pencil, Share2, Check, X, ChevronDown,
-  AlignLeft, AlignCenter, AlignRight, AlignJustify, Globe2, FileText
+  AlignLeft, AlignCenter, AlignRight, AlignJustify, Globe2, FileText, Star
 } from 'lucide-react'
+import MacOSDock from './components/ui/mac-os-dock.tsx'
 import {
   DEFAULT_STYLE_SETTINGS,
   cleanBookmarkTitle,
@@ -27,9 +28,38 @@ const DEFAULT_UI_SETTINGS = {
   openLinksInNewTab: false,
   showBookmarkDescriptions: false,
   boardAlignment: 'start',
+  iconOnlyMode: false,
+  iconColumns: 4,
+  showFavoritesDock: true,
+  dockSize: 64,
 };
 
+const sampleApps = [
+  { 
+    id: 'finder', 
+    name: 'Finder', 
+    icon: 'https://cdn.jim-nielsen.com/macos/1024/finder-2021-09-10.png?rf=1024' 
+  },
+  { 
+    id: 'calculator', 
+    name: 'Calculator', 
+    icon: 'https://cdn.jim-nielsen.com/macos/1024/calculator-2021-04-29.png?rf=1024' 
+  },
+  { 
+    id: 'terminal', 
+    name: 'Terminal', 
+    icon: 'https://cdn.jim-nielsen.com/macos/1024/terminal-2021-06-03.png?rf=1024' 
+  },
+  { 
+    id: 'safari', 
+    name: 'Safari', 
+    icon: 'https://cdn.jim-nielsen.com/macos/1024/safari-2021-06-02.png?rf=1024' 
+  },
+];
+
 function App() {
+  const [openDockApps, setOpenDockApps] = useState(['finder', 'safari']);
+  const [favoriteBookmarkIds, setFavoriteBookmarkIds] = useState([]);
   const [columns, setColumns] = useState({});
   const [columnOrder, setColumnOrder] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -60,12 +90,33 @@ function App() {
   const [editingBookmarkId, setEditingBookmarkId] = useState(null);
   const [editTitleValue, setEditTitleValue] = useState('');
   const [editUrlValue, setEditUrlValue] = useState('');
+  const [activeContextMenuId, setActiveContextMenuId] = useState(null);
 
   // Feature States
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
   const [privacyBoardId, setPrivacyBoardId] = useState(null);
+
+  const handleDockAppClick = (appId) => {
+    setOpenDockApps(prev => 
+      prev.includes(appId) 
+        ? prev.filter(id => id !== appId)
+        : [...prev, appId]
+    );
+  };
+
+  const toggleFavorite = (bmId) => {
+    setFavoriteBookmarkIds(prev => {
+      const next = prev.includes(bmId) ? prev.filter(id => id !== bmId) : [...prev, bmId];
+      if (hasChromeApi('storage')) {
+        chrome.storage.local.set({ favoriteBookmarkIds: next });
+      } else {
+        window.localStorage.setItem('mock_favoriteBookmarkIds', JSON.stringify(next));
+      }
+      return next;
+    });
+  };
 
   const closeSearch = () => {
     setIsSearchOpen(false);
@@ -204,6 +255,9 @@ function App() {
       if (!e.target.closest('.import-menu-container') && !e.target.closest('.import-menu-trigger')) {
         setIsImportMenuOpen(false);
       }
+      if (!e.target.closest('.context-menu-actions')) {
+        setActiveContextMenuId(null);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -235,11 +289,12 @@ function App() {
   // Load bookmarks and settings
   useEffect(() => {
     if (hasChromeApi('storage')) {
-      chrome.storage.local.get(['wallpaper', 'styleSettings', 'uiSettings', 'boardTabs', 'tabs', 'boardLayout2D'], (result) => {
+      chrome.storage.local.get(['wallpaper', 'styleSettings', 'uiSettings', 'boardTabs', 'tabs', 'boardLayout2D', 'favoriteBookmarkIds'], (result) => {
         if (result.wallpaper) setWallpaper(result.wallpaper);
         if (result.styleSettings) setStyleSettings(result.styleSettings);
         if (result.uiSettings) setUiSettings({ ...DEFAULT_UI_SETTINGS, ...result.uiSettings });
         if (result.boardLayout2D) setBoardLayout2D(result.boardLayout2D);
+        if (result.favoriteBookmarkIds) setFavoriteBookmarkIds(result.favoriteBookmarkIds);
         loadBookmarks(result.tabs || DEFAULT_TABS);
       });
     } else {
@@ -255,6 +310,8 @@ function App() {
       if (mockTabs) setTabs(JSON.parse(mockTabs));
       const mockBoardLayout2D = window.localStorage.getItem('mock_boardLayout2D');
       if (mockBoardLayout2D) setBoardLayout2D(JSON.parse(mockBoardLayout2D));
+      const mockFavoriteBookmarkIds = window.localStorage.getItem('mock_favoriteBookmarkIds');
+      if (mockFavoriteBookmarkIds) setFavoriteBookmarkIds(JSON.parse(mockFavoriteBookmarkIds));
       loadBookmarks();
     }
     // Initial bootstrapping intentionally runs once; loadBookmarks closes over startup defaults.
@@ -531,7 +588,17 @@ function App() {
 
     // Bookmark drag logic
     const sourceCol = columns[source.droppableId];
+
+    if (destination.droppableId === 'favorites-dock') {
+      const bmId = draggableId;
+      if (!favoriteBookmarkIds.includes(bmId)) {
+        toggleFavorite(bmId);
+      }
+      return;
+    }
+
     const destCol = columns[destination.droppableId];
+    if (!sourceCol || !destCol) return;
     const sourceBookmarks = [...sourceCol.bookmarks];
     const destBookmarks = source.droppableId === destination.droppableId ? sourceBookmarks : [...destCol.bookmarks];
 
@@ -1136,7 +1203,7 @@ function App() {
   const SettingToggle = ({ id, title, description }) => (
     <button
       onClick={() => saveUiSettings({ [id]: !uiSettings[id] })}
-      className="flex w-full items-center justify-between gap-4 rounded-[8px] px-2 py-2.5 text-left transition-colors hover:bg-white/10"
+      className={`flex w-full items-center justify-between gap-4 rounded-[8px] px-2 py-2.5 text-left transition-colors ${isDark ? 'hover:bg-white/5' : 'hover:bg-black/5'}`}
       aria-pressed={uiSettings[id]}
     >
       <div className="min-w-0">
@@ -1188,12 +1255,13 @@ function App() {
   );
 
   return (
+    <DragDropContext onDragStart={() => setIsDraggingAny(true)} onDragEnd={onDragEnd}>
     <div 
       className="min-h-screen transition-all duration-500 overflow-hidden font-sans"
       style={{
         backgroundColor: wallpaper ? 'transparent' : '#111111',
         backgroundImage: wallpaper ? `url(${wallpaper})` : 'none',
-        backgroundSize: 'cover',
+        backgroundSize: styleSettings.wallpaperFit === 'fill' ? '100% 100%' : (styleSettings.wallpaperFit || 'cover'),
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat'
       }}
@@ -1350,7 +1418,6 @@ function App() {
         </div>
 
         {/* Kanban Board Container (Now Draggable!) */}
-        <DragDropContext onDragStart={() => setIsDraggingAny(true)} onDragEnd={onDragEnd}>
           <div
             data-testid="board-canvas"
             className={`grid w-full ${uiSettings.compactMode ? 'gap-2.5 sm:gap-4' : 'gap-3 sm:gap-6'} flex-1 items-start overflow-hidden pb-24 sm:pb-8 min-h-0 no-scrollbar`}
@@ -1407,7 +1474,7 @@ function App() {
                                       <div className={`flex min-h-7 items-center justify-between gap-1 ${uiSettings.compactMode ? 'mb-0.5' : 'mb-1'} sm:min-h-0 sm:gap-2 sm:mb-2`}>
                                         <div
                                           {...boardProvided.dragHandleProps}
-                                          className="flex min-w-0 flex-1 cursor-grab touch-none items-center gap-1.5 rounded-md active:cursor-grabbing"
+                                          className="flex min-w-0 flex-1 cursor-grab touch-none select-none items-center gap-1.5 rounded-md active:cursor-grabbing"
                                           title="Hold and drag board"
                                           aria-label={`Drag board ${column.title}`}
                                         >
@@ -1426,7 +1493,7 @@ function App() {
                                               style={{ color: isDark ? '#ffffff' : '#1e293b' }}
                                             />
                                           ) : (
-                                            <div className="min-w-0 truncate text-[11px] font-medium leading-4 sm:text-[15px] sm:font-semibold" style={{ color: isDark ? '#ffffff' : '#1e293b' }}>
+                                            <div className="min-w-0 truncate text-[11px] font-medium leading-4 sm:text-[15px] sm:font-semibold select-none" style={{ color: isDark ? '#ffffff' : '#1e293b' }}>
                                               {column.title}
                                             </div>
                                           )}
@@ -1456,7 +1523,10 @@ function App() {
 
                                       <div className={`${uiSettings.compactMode ? 'mb-0.5 sm:mb-2' : 'mb-1 sm:mb-3'} h-px w-full`} style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }}></div>
 
-                                        <div className={`flex-1 flex flex-col ${uiSettings.compactMode ? 'gap-0' : 'gap-0.5'} relative`}>
+                                        <div 
+                                          className={`flex-1 ${uiSettings.iconOnlyMode ? 'grid content-start gap-1 sm:gap-2' : `flex flex-col ${uiSettings.compactMode ? 'gap-0' : 'gap-0.5'}`} relative`}
+                                          style={uiSettings.iconOnlyMode ? { gridTemplateColumns: `repeat(${uiSettings.iconColumns || 4}, minmax(0, 1fr))` } : {}}
+                                        >
                                           {displayColumns[column.id].bookmarks.map((bookmark, idx) => (
                                           <Draggable key={bookmark.id} draggableId={bookmark.id} index={idx} isDragDisabled={editingBookmarkId === bookmark.id}>
                                             {(bookmarkProvided, bookmarkSnapshot) => (
@@ -1466,7 +1536,14 @@ function App() {
                                                 {...bookmarkProvided.dragHandleProps}
                                                 className={`group/bookmark relative flex touch-none items-center gap-1 px-0.5 py-0.5 sm:gap-2 ${uiSettings.compactMode ? 'sm:py-1 sm:px-1.5' : 'sm:py-1.5 sm:px-2'} rounded-lg select-none transition-colors ${
                                                   bookmarkSnapshot.isDragging ? 'z-50 shadow-xl bg-white/15 dark:bg-white/15 cursor-grabbing' : 'cursor-grab hover:bg-black/5 active:cursor-grabbing dark:hover:bg-white/10'
-                                                }`}
+                                                } ${uiSettings.iconOnlyMode ? 'justify-self-center p-2 sm:p-2.5' : ''}`}
+                                                title={uiSettings.iconOnlyMode ? cleanTitle(bookmark.title) : undefined}
+                                                onContextMenu={(e) => {
+                                                  if (uiSettings.iconOnlyMode) {
+                                                    e.preventDefault();
+                                                    setActiveContextMenuId(activeContextMenuId === bookmark.id ? null : bookmark.id);
+                                                  }
+                                                }}
                                               >
                                                 {editingBookmarkId === bookmark.id ? (
                                                   <div
@@ -1515,51 +1592,80 @@ function App() {
                                                       onError={handleFaviconError}
                                                       alt=""
                                                       draggable={false}
-                                                      className="h-4 w-4 shrink-0 rounded-[4px] bg-white/10 object-contain sm:h-[20px] sm:w-[20px]"
+                                                      className={`${uiSettings.iconOnlyMode ? (uiSettings.iconColumns === 3 ? 'h-8 w-8 sm:h-10 sm:w-10' : 'h-6 w-6 sm:h-7 sm:w-7') : 'h-4 w-4 sm:h-[20px] sm:w-[20px]'} shrink-0 rounded-[4px] object-contain transition-transform duration-200 group-hover/bookmark:scale-110`}
                                                     />
-                                                    <a 
-                                                      href={bookmark.url} 
-                                                      draggable={false}
-                                                      target={uiSettings.openLinksInNewTab ? '_blank' : undefined}
-                                                      rel={uiSettings.openLinksInNewTab ? 'noreferrer' : undefined}
-                                                      onClick={(e) => {
-                                                        if (isIncognito) {
-                                                          e.preventDefault();
-                                                          if (hasChromeApi('windows')) {
-                                                            chrome.windows.create({ url: bookmark.url, incognito: true });
-                                                          } else {
-                                                            alert('Incognito mode requires Chrome Extension API. Opening normally in new tab.');
-                                                            window.open(bookmark.url, '_blank');
+                                                    {uiSettings.iconOnlyMode && (
+                                                      <a 
+                                                        href={bookmark.url}
+                                                        className="absolute inset-0 z-10"
+                                                        target={uiSettings.openLinksInNewTab ? '_blank' : undefined}
+                                                        rel={uiSettings.openLinksInNewTab ? 'noreferrer' : undefined}
+                                                        draggable={false}
+                                                        onClick={(e) => {
+                                                          if (isIncognito) {
+                                                            e.preventDefault();
+                                                            if (hasChromeApi('windows')) {
+                                                              chrome.windows.create({ url: bookmark.url, incognito: true });
+                                                            } else {
+                                                              alert('Incognito mode requires Chrome Extension API. Opening normally in new tab.');
+                                                              window.open(bookmark.url, '_blank');
+                                                            }
                                                           }
-                                                        }
-                                                      }}
-                                                      className={`text-[10.5px] font-[400] transition-all flex-1 min-w-0 sm:text-[13px] sm:group-hover/bookmark:pr-14 ${isDark ? 'text-white/80 hover:text-white' : 'text-slate-700 hover:text-black'}`}
-                                                    >
-                                                      <span className={uiSettings.shortenLongTitles ? 'block truncate' : 'block break-words leading-snug'}>
-                                                        {cleanTitle(bookmark.title)}
-                                                      </span>
-                                                      {uiSettings.showBookmarkDescriptions && (
-                                                        <span className={`block truncate text-[10px] leading-3 ${isDark ? 'text-white/45' : 'text-slate-500'}`}>
-                                                          {getBookmarkHost(bookmark.url)}
+                                                        }}
+                                                      />
+                                                    )}
+                                                    {!uiSettings.iconOnlyMode && (
+                                                      <a 
+                                                        href={bookmark.url} 
+                                                        draggable={false}
+                                                        target={uiSettings.openLinksInNewTab ? '_blank' : undefined}
+                                                        rel={uiSettings.openLinksInNewTab ? 'noreferrer' : undefined}
+                                                        onClick={(e) => {
+                                                          if (isIncognito) {
+                                                            e.preventDefault();
+                                                            if (hasChromeApi('windows')) {
+                                                              chrome.windows.create({ url: bookmark.url, incognito: true });
+                                                            } else {
+                                                              alert('Incognito mode requires Chrome Extension API. Opening normally in new tab.');
+                                                              window.open(bookmark.url, '_blank');
+                                                            }
+                                                          }
+                                                        }}
+                                                        className={`text-[10.5px] font-[400] transition-all flex-1 min-w-0 sm:text-[13px] sm:group-hover/bookmark:pr-14 ${isDark ? 'text-white/80 hover:text-white' : 'text-slate-700 hover:text-black'}`}
+                                                      >
+                                                        <span className={uiSettings.shortenLongTitles ? 'block truncate' : 'block break-words leading-snug'}>
+                                                          {cleanTitle(bookmark.title)}
                                                         </span>
-                                                      )}
-                                                    </a>
+                                                        {uiSettings.showBookmarkDescriptions && (
+                                                          <span className={`block truncate text-[10px] leading-3 ${isDark ? 'text-white/45' : 'text-slate-500'}`}>
+                                                            {getBookmarkHost(bookmark.url)}
+                                                          </span>
+                                                        )}
+                                                      </a>
+                                                    )}
                                                     
-                                                    {/* Inline Hover Actions */}
-                                                    <div className={`absolute right-2 opacity-0 group-hover/bookmark:opacity-100 flex items-center gap-2 transition-opacity`}>
+                                                    {/* Inline Actions */}
+                                                    <div className={`absolute ${uiSettings.iconOnlyMode ? 'inset-x-0 -bottom-1.5 justify-center z-20 gap-1 context-menu-actions transition-all duration-200' : 'right-2 gap-2 opacity-0 group-hover/bookmark:opacity-100 transition-opacity pointer-events-none group-hover/bookmark:pointer-events-auto'} ${uiSettings.iconOnlyMode ? (activeContextMenuId === bookmark.id ? 'flex opacity-100 scale-100 pointer-events-auto' : 'flex opacity-0 scale-95 pointer-events-none') : 'flex'} items-center`}>
                                                       <button 
                                                         onMouseDown={(e) => e.stopPropagation()}
-                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingBookmarkId(bookmark.id); setEditTitleValue(bookmark.title || ''); setEditUrlValue(bookmark.url || ''); }}
-                                                        className={`text-slate-400/80 transition-colors ${isDark ? 'hover:text-white' : 'hover:text-slate-900'}`}
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveContextMenuId(null); toggleFavorite(bookmark.id); }}
+                                                        className={`transition-colors ${favoriteBookmarkIds.includes(bookmark.id) ? 'text-yellow-400 hover:text-yellow-500' : (isDark || uiSettings.iconOnlyMode ? 'hover:text-white text-slate-300' : 'hover:text-slate-900 text-slate-500')} ${uiSettings.iconOnlyMode ? 'bg-black/80 shadow-md rounded-full p-1 border border-white/10' : ''}`}
                                                       >
-                                                        <Pencil size={14} strokeWidth={2} />
+                                                        <Star size={uiSettings.iconOnlyMode ? 10 : 14} strokeWidth={uiSettings.iconOnlyMode ? 2.5 : 2} fill={favoriteBookmarkIds.includes(bookmark.id) ? 'currentColor' : 'none'} />
                                                       </button>
                                                       <button 
                                                         onMouseDown={(e) => e.stopPropagation()}
-                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteBookmark(column.id, bookmark.id); }}
-                                                        className="text-red-400/80 hover:text-red-500 transition-colors"
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveContextMenuId(null); setEditingBookmarkId(bookmark.id); setEditTitleValue(bookmark.title || ''); setEditUrlValue(bookmark.url || ''); }}
+                                                        className={`transition-colors ${isDark || uiSettings.iconOnlyMode ? 'hover:text-white text-slate-300' : 'hover:text-slate-900 text-slate-500'} ${uiSettings.iconOnlyMode ? 'bg-black/80 shadow-md rounded-full p-1 border border-white/10' : ''}`}
                                                       >
-                                                        <Trash2 size={14} strokeWidth={2} />
+                                                        <Pencil size={uiSettings.iconOnlyMode ? 10 : 14} strokeWidth={uiSettings.iconOnlyMode ? 2.5 : 2} />
+                                                      </button>
+                                                      <button 
+                                                        onMouseDown={(e) => e.stopPropagation()}
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveContextMenuId(null); handleDeleteBookmark(column.id, bookmark.id); }}
+                                                        className={`text-red-400/90 hover:text-red-500 transition-colors ${uiSettings.iconOnlyMode ? 'bg-black/80 shadow-md rounded-full p-1 border border-white/10' : ''}`}
+                                                      >
+                                                        <Trash2 size={uiSettings.iconOnlyMode ? 10 : 14} strokeWidth={uiSettings.iconOnlyMode ? 2.5 : 2} />
                                                       </button>
                                                     </div>
                                                   </>
@@ -1685,15 +1791,14 @@ function App() {
                           />
                           <button 
                             onClick={handleAddCategoryConfirm} 
-                            className="shrink-0 px-3 py-1.5 rounded-[8px] font-semibold text-[12px] hover:scale-105 active:scale-95 transition-all shadow-sm"
-                            style={{ backgroundColor: '#e2d5bd', color: '#1e293b' }}
+                            className="shrink-0 px-3 py-1.5 rounded-[8px] font-semibold text-[12px] hover:scale-105 active:scale-95 transition-all shadow-sm text-white"
+                            style={{ backgroundColor: styleSettings.primaryColor }}
                           >
                             Add
                           </button>
                           <button 
                             onClick={() => setActiveAddBoardColIndex(null)} 
-                            className="shrink-0 w-[28px] h-[28px] flex items-center justify-center rounded-[8px] hover:scale-105 active:scale-95 transition-all shadow-sm"
-                            style={{ backgroundColor: '#4a2525', color: '#f76b6b', border: '1px solid rgba(255,255,255,0.05)' }}
+                            className={`shrink-0 w-[28px] h-[28px] flex items-center justify-center rounded-[8px] hover:scale-105 active:scale-95 transition-all shadow-sm ${isDark ? 'bg-white/10 text-white/70 hover:text-white border border-white/10' : 'bg-black/5 text-slate-600 hover:text-slate-900 border border-black/5'}`}
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                           </button>
@@ -1706,7 +1811,6 @@ function App() {
               ));
             })()}
           </div>
-        </DragDropContext>
       </div>
 
       {/* Floating Action Bar */}
@@ -1886,6 +1990,29 @@ function App() {
             <div className="min-h-0 flex-1 overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))] no-scrollbar">
               <div className={`${inputBg} ${inputBorder} mb-4 rounded-[10px] border p-3`}>
                 <div className={`mx-2 mb-1 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Appearance</div>
+                <SettingToggle id="iconOnlyMode" title="Icon-only mode" description="Display bookmarks as a compact grid of icons without titles." />
+                {uiSettings.iconOnlyMode && (
+                  <div className={`mx-2 mb-2 flex items-center justify-between rounded-[8px] px-2 py-1.5`}>
+                    <div className="flex flex-col">
+                      <span className={`text-[13px] font-semibold leading-5 ${modalText}`}>Icons per row</span>
+                    </div>
+                    <div className="flex rounded-[8px] border p-0.5" style={{ backgroundColor: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)', borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                      {[3, 4].map(num => (
+                        <button
+                          key={num}
+                          onClick={() => saveUiSettings({ iconColumns: num })}
+                          className={`w-8 rounded-[6px] py-1 text-[12px] font-semibold transition-all ${uiSettings.iconColumns === num ? 'shadow-sm' : 'opacity-60'}`}
+                          style={{ 
+                            backgroundColor: uiSettings.iconColumns === num ? styleSettings.primaryColor : 'transparent',
+                            color: uiSettings.iconColumns === num ? '#ffffff' : (isDark ? '#e2e8f0' : '#475569') 
+                          }}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <SettingToggle id="compactMode" title="Compact mode" description="Reduce spacing to show more bookmarks." />
                 <SettingToggle id="groupRightTools" title="Group right-side tools" description="Keep Search and Settings visible, and place other tools in one menu." />
                 <SettingToggle id="hideExtraBookmarks" title="Hide extra bookmarks in long boards" description="Show the first 8 bookmarks in dense boards." />
@@ -1901,6 +2028,35 @@ function App() {
                 <div className={`mx-2 mb-1 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Behavior</div>
                 <SettingToggle id="openLinksInNewTab" title="Open links in new tab" description="Open bookmarks in a new browser tab." />
                 <SettingToggle id="showBookmarkDescriptions" title="Show bookmark descriptions" description="Display each bookmark domain below its title." />
+              </div>
+
+              <div className={`${inputBg} ${inputBorder} mt-4 rounded-[10px] border p-3`}>
+                <div className={`mx-2 mb-1 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Favorites Dock</div>
+                <SettingToggle id="showFavoritesDock" title="Show Favorites Dock" description="Display the macOS style dock at the bottom." />
+                
+                <div className={`mt-2 flex w-full flex-col gap-2 rounded-[8px] px-2 py-2.5 ${uiSettings.showFavoritesDock ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                  <div className="flex justify-between items-center mb-1">
+                    <span className={`text-[13px] font-semibold leading-5 ${modalText}`}>Dock Size</span>
+                    <span className={`text-[12px] font-medium ${isDark ? 'text-white/60' : 'text-black/50'}`}>{uiSettings.dockSize}px</span>
+                  </div>
+                  <div className="relative w-full pb-2 pt-1">
+                    <input 
+                      type="range" 
+                      min="40" 
+                      max="104" 
+                      step="16"
+                      value={uiSettings.dockSize} 
+                      onChange={(e) => saveUiSettings({ dockSize: parseInt(e.target.value) })}
+                      className="absolute inset-x-0 top-1 z-10 w-full accent-current h-1.5 bg-black/10 dark:bg-white/10 rounded-full appearance-none cursor-pointer" 
+                      style={{ color: styleSettings.primaryColor }}
+                    />
+                    <div className="absolute inset-x-2 top-[14px] flex justify-between pointer-events-none">
+                      {[40, 56, 72, 88, 104].map((size) => (
+                        <div key={size} className="w-[2px] h-[4px] rounded-full" style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)' }}></div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1950,6 +2106,26 @@ function App() {
                   <span className={`text-[13px] font-medium ${modalSubText}`}>{styleSettings.boardOpacity}%</span>
                 </div>
                 <input type="range" min="0" max="100" className={`w-full h-1.5 rounded-lg appearance-none cursor-pointer ${isDark ? 'bg-white/10' : 'bg-slate-200'}`} value={styleSettings.boardOpacity} onChange={e => saveStyleSettings({...styleSettings, boardOpacity: parseInt(e.target.value)})} style={{ accentColor: styleSettings.primaryColor }} />
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-3">
+                  <span className={`text-[13px] font-medium ${modalText}`}>Wallpaper Fit</span>
+                </div>
+                <div className="flex rounded-lg overflow-hidden border border-black/10">
+                  {['cover', 'contain', 'fill'].map((fit) => (
+                    <button
+                      key={fit}
+                      onClick={() => saveStyleSettings({...styleSettings, wallpaperFit: fit})}
+                      className={`flex-1 py-1.5 text-[12px] font-medium transition-colors ${(styleSettings.wallpaperFit || 'cover') === fit ? 'shadow-sm' : 'opacity-70'}`}
+                      style={{ 
+                        backgroundColor: (styleSettings.wallpaperFit || 'cover') === fit ? styleSettings.primaryColor : 'transparent',
+                        color: (styleSettings.wallpaperFit || 'cover') === fit ? '#ffffff' : (isDark ? '#e2e8f0' : '#475569') 
+                      }}
+                    >
+                      {fit.charAt(0).toUpperCase() + fit.slice(1)}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div>
                 <div className="flex justify-between items-center mb-3">
@@ -2067,7 +2243,64 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* MacOS Dock */}
+      {uiSettings.showFavoritesDock && (
+      <Droppable droppableId="favorites-dock" direction="horizontal" isDropDisabled={false}>
+        {(provided, snapshot) => {
+          // Compute favorite apps dynamically
+          const favoriteApps = favoriteBookmarkIds.map(id => {
+            for (const col of Object.values(columns)) {
+              const bm = col.bookmarks.find(b => b.id === id);
+              if (bm) {
+                return {
+                  id: bm.id,
+                  name: bm.title,
+                  icon: getFaviconUrl(bm.url, 128)
+                };
+              }
+            }
+            return null;
+          }).filter(Boolean);
+
+          if (favoriteApps.length === 0 && !snapshot.isDraggingOver) {
+            return (
+              <div ref={provided.innerRef} {...provided.droppableProps} className="hidden">
+                 {provided.placeholder}
+              </div>
+            );
+          }
+
+          return (
+            <div 
+              ref={provided.innerRef} 
+              {...provided.droppableProps}
+              className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-40 transition-transform ${snapshot.isDraggingOver ? 'scale-105' : 'scale-100'}`}
+            >
+              <MacOSDock
+                apps={favoriteApps}
+                size={uiSettings.dockSize}
+                onAppClick={(appId) => {
+                  const app = favoriteApps.find(a => a.id === appId);
+                  if (app) {
+                    const originalCol = Object.values(columns).find(c => c.bookmarks.some(b => b.id === appId));
+                    const originalBm = originalCol?.bookmarks.find(b => b.id === appId);
+                    if (originalBm) {
+                      window.open(originalBm.url, uiSettings.openLinksInNewTab ? '_blank' : '_self');
+                    }
+                  }
+                  handleDockAppClick(appId);
+                }}
+                openApps={openDockApps}
+              />
+              <div className="hidden">{provided.placeholder}</div>
+            </div>
+          );
+        }}
+      </Droppable>
+      )}
     </div>
+    </DragDropContext>
   )
 }
 
