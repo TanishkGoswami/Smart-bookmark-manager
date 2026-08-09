@@ -1,7 +1,36 @@
 @import "tailwindcss";
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-menu-button {
+  width: 0;
+  opacity: 0;
+}
+
+.tab-menu-container:hover .tab-menu-button,
+.tab-menu-button.is-visible {
+  width: 1.75rem;
+  opacity: 1;
+}
+
 @theme {
-  --font-sans: "Poppins", sans-serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --color-primary: #00cc76;
   --color-primary-foreground: #ffffff;
   --color-background: #f4f1e8;

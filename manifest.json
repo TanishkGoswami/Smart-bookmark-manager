@@ -11,7 +11,12 @@
   },
   "permissions": [
     "bookmarks",
-    "storage"
+    "search",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ],
   "icons": {
     "16": "logo.png",
