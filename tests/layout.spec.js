@@ -6,9 +6,25 @@ test.describe('Board Layout', () => {
     await page.evaluate(() => localStorage.clear());
   });
 
-  test('board canvas fills the viewport without page scrollbars', async ({ page }) => {
-    await page.goto('http://localhost:5173');
+  test('mock boards render in adjacent desktop columns', async ({ page }) => {
+    const container = page.getByTestId('board-canvas');
+    await expect(container).toBeVisible();
 
+    const boards = page.getByTestId('board-card');
+    await expect(boards).toHaveCount(2);
+    await expect(page.getByText('Bookmarks Bar')).toBeVisible();
+    await expect(page.getByText('Sites')).toBeVisible();
+
+    const firstColBox = await boards.nth(0).boundingBox();
+    const secondColBox = await boards.nth(1).boundingBox();
+
+    expect(firstColBox).not.toBeNull();
+    expect(secondColBox).not.toBeNull();
+    expect(secondColBox.x).toBeGreaterThan(firstColBox.x);
+    expect(secondColBox.y).toBeCloseTo(firstColBox.y, -1);
+  });
+
+  test('board canvas fills the viewport without page scrollbars', async ({ page }) => {
     const container = page.getByTestId('board-canvas');
     await expect(container).toBeVisible();
 
@@ -25,8 +41,6 @@ test.describe('Board Layout', () => {
   });
 
   test('theme studio previews and saves a preset', async ({ page }) => {
-    await page.goto('http://localhost:5173');
-
     await page.locator('button[title="Settings"]').click();
     await page.getByTestId('settings-theme-tab').click();
     await page.getByTestId('theme-preset-mono-dot').click();

@@ -5,10 +5,18 @@ import {
   Search, Plus, Image as ImageIcon, Download, 
   VenetianMask, LayoutDashboard, Trash2, Eye, Settings,
   MoreVertical, Menu, Link2, ExternalLink, RefreshCw, Pencil, Share2, Check, X, ChevronDown,
-  AlignLeft, AlignCenter, AlignRight, AlignJustify, Globe2, FileText
+  AlignLeft, AlignCenter, AlignRight, AlignJustify, Globe2, FileText, Star
 } from 'lucide-react'
 import { useTheme } from './theme/themeContext.js'
 import { getContrastRatio, styleSettingsToTheme } from './theme/themeCore.js'
+import MacOSDock from './components/ui/mac-os-dock.tsx'
+import {
+  DEFAULT_STYLE_SETTINGS,
+  cleanBookmarkTitle,
+  getFaviconUrl,
+  hasChromeApi,
+  hexToRgba,
+} from './lib/bookmarkUtils'
 
 const fac = new FastAverageColor();
 const DEFAULT_TABS = ['Home', 'Work', 'Personal'];
@@ -22,6 +30,10 @@ const DEFAULT_UI_SETTINGS = {
   openLinksInNewTab: false,
   showBookmarkDescriptions: false,
   boardAlignment: 'start',
+  iconOnlyMode: false,
+  iconColumns: 4,
+  showFavoritesDock: true,
+  dockSize: 64,
 };
 
 function App() {
@@ -37,6 +49,8 @@ function App() {
     saveThemeDraft,
     resetTheme,
   } = useTheme();
+  const [openDockApps, setOpenDockApps] = useState(['finder', 'safari']);
+  const [favoriteBookmarkIds, setFavoriteBookmarkIds] = useState([]);
   const [columns, setColumns] = useState({});
   const [columnOrder, setColumnOrder] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -68,12 +82,33 @@ function App() {
   const [editingBookmarkId, setEditingBookmarkId] = useState(null);
   const [editTitleValue, setEditTitleValue] = useState('');
   const [editUrlValue, setEditUrlValue] = useState('');
+  const [activeContextMenuId, setActiveContextMenuId] = useState(null);
 
   // Feature States
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
   const [privacyBoardId, setPrivacyBoardId] = useState(null);
+
+  const handleDockAppClick = (appId) => {
+    setOpenDockApps(prev => 
+      prev.includes(appId) 
+        ? prev.filter(id => id !== appId)
+        : [...prev, appId]
+    );
+  };
+
+  const toggleFavorite = (bmId) => {
+    setFavoriteBookmarkIds(prev => {
+      const next = prev.includes(bmId) ? prev.filter(id => id !== bmId) : [...prev, bmId];
+      if (hasChromeApi('storage')) {
+        chrome.storage.local.set({ favoriteBookmarkIds: next });
+      } else {
+        window.localStorage.setItem('mock_favoriteBookmarkIds', JSON.stringify(next));
+      }
+      return next;
+    });
+  };
 
   const closeSearch = () => {
     setIsSearchOpen(false);
@@ -109,26 +144,7 @@ function App() {
   const [trashBoardId, setTrashBoardId] = useState(null);
   const hasChromeBookmarks = () => typeof chrome !== 'undefined' && chrome.bookmarks;
 
-  // Clean title logic
-  const cleanTitle = (title) => {
-    if (!title) return '';
-    let cleaned = title;
-    if (cleaned.startsWith('http') || cleaned.includes('://')) {
-      try {
-        const urlObj = new URL(cleaned.startsWith('http') ? cleaned : 'https://' + cleaned);
-        cleaned = urlObj.hostname;
-      } catch {}
-    }
-    cleaned = cleaned.replace(/^www\./i, '');
-    const tldRegex = /\.(com|in|org|net|co|io|dev|app|edu|gov|us|uk)$/i;
-    if (tldRegex.test(cleaned)) {
-      cleaned = cleaned.replace(tldRegex, '');
-    }
-    if (!cleaned.includes(' ') && cleaned.length > 0) {
-      cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-    }
-    return cleaned;
-  };
+  const cleanTitle = cleanBookmarkTitle;
 
   const getBookmarkHost = (url) => {
     try {
@@ -235,6 +251,9 @@ function App() {
       if (!e.target.closest('.import-menu-container') && !e.target.closest('.import-menu-trigger')) {
         setIsImportMenuOpen(false);
       }
+      if (!e.target.closest('.context-menu-actions')) {
+        setActiveContextMenuId(null);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -265,12 +284,13 @@ function App() {
 
   // Load bookmarks and settings
   useEffect(() => {
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      chrome.storage.local.get(['wallpaper', 'styleSettings', 'uiSettings', 'boardTabs', 'tabs', 'boardLayout2D'], (result) => {
+    if (hasChromeApi('storage')) {
+      chrome.storage.local.get(['wallpaper', 'styleSettings', 'uiSettings', 'boardTabs', 'tabs', 'boardLayout2D', 'favoriteBookmarkIds'], (result) => {
         if (result.wallpaper) setWallpaper(result.wallpaper);
         if (result.styleSettings) setStyleSettings(result.styleSettings);
         if (result.uiSettings) setUiSettings({ ...DEFAULT_UI_SETTINGS, ...result.uiSettings });
         if (result.boardLayout2D) setBoardLayout2D(result.boardLayout2D);
+        if (result.favoriteBookmarkIds) setFavoriteBookmarkIds(result.favoriteBookmarkIds);
         loadBookmarks(result.tabs || DEFAULT_TABS);
       });
     } else {
@@ -286,6 +306,8 @@ function App() {
       if (mockTabs) setTabs(JSON.parse(mockTabs));
       const mockBoardLayout2D = window.localStorage.getItem('mock_boardLayout2D');
       if (mockBoardLayout2D) setBoardLayout2D(JSON.parse(mockBoardLayout2D));
+      const mockFavoriteBookmarkIds = window.localStorage.getItem('mock_favoriteBookmarkIds');
+      if (mockFavoriteBookmarkIds) setFavoriteBookmarkIds(JSON.parse(mockFavoriteBookmarkIds));
       loadBookmarks();
     }
     // Initial bootstrapping intentionally runs once; loadBookmarks closes over startup defaults.
@@ -295,7 +317,7 @@ function App() {
   const saveStyleSettings = (newSettings) => {
     setStyleSettings(newSettings);
     publishTheme(styleSettingsToTheme(newSettings, effectiveTheme));
-    if (typeof chrome !== 'undefined' && chrome.storage) {
+    if (hasChromeApi('storage')) {
       chrome.storage.local.set({ styleSettings: newSettings });
     }
   };
@@ -310,7 +332,7 @@ function App() {
 
   useEffect(() => {
     if (loading) return;
-    if (typeof chrome === 'undefined' || !chrome.bookmarks) {
+    if (!hasChromeApi('bookmarks')) {
       if (Object.keys(columns).length > 0) {
         window.localStorage.setItem('mock_columns', JSON.stringify(columns));
         window.localStorage.setItem('mock_columnOrder', JSON.stringify(columnOrder));
@@ -320,7 +342,7 @@ function App() {
 
   useEffect(() => {
     if (loading) return;
-    if (typeof chrome === 'undefined' || !chrome.storage) {
+    if (!hasChromeApi('storage')) {
       window.localStorage.setItem('mock_boardTabs', JSON.stringify(boardTabs));
       window.localStorage.setItem('mock_tabs', JSON.stringify(tabs));
       window.localStorage.setItem('mock_boardLayout2D', JSON.stringify(boardLayout2D));
@@ -331,7 +353,7 @@ function App() {
   }, [boardTabs, tabs, boardLayout2D, styleSettings, uiSettings, wallpaper, loading]);
 
   const loadBookmarks = (savedTabs = DEFAULT_TABS) => {
-    if (hasChromeBookmarks()) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.getTree((tree) => {
         const rootNodes = tree[0]?.children || [];
         const bookmarksBar = rootNodes.find(n => n.id === "1") || rootNodes[0];
@@ -536,7 +558,7 @@ function App() {
           }
         };
         setBoardLayout2D(newBoardLayout2D);
-        if (typeof chrome !== 'undefined' && chrome.storage) {
+        if (hasChromeApi('storage')) {
           chrome.storage.local.set({ boardLayout2D: newBoardLayout2D });
         }
         
@@ -551,7 +573,7 @@ function App() {
         }
         setColumnOrder(newGlobalOrder);
         
-        if (hasChromeBookmarks()) {
+        if (hasChromeApi('bookmarks')) {
           const activeParentId = tabFolderIds[activeTab] || bookmarksBarId;
           flatLayout.forEach((id) => {
              chrome.bookmarks.move(id, { parentId: activeParentId, index: flatLayout.indexOf(id) });
@@ -563,7 +585,17 @@ function App() {
 
     // Bookmark drag logic
     const sourceCol = columns[source.droppableId];
+
+    if (destination.droppableId === 'favorites-dock') {
+      const bmId = draggableId;
+      if (!favoriteBookmarkIds.includes(bmId)) {
+        toggleFavorite(bmId);
+      }
+      return;
+    }
+
     const destCol = columns[destination.droppableId];
+    if (!sourceCol || !destCol) return;
     const sourceBookmarks = [...sourceCol.bookmarks];
     const destBookmarks = source.droppableId === destination.droppableId ? sourceBookmarks : [...destCol.bookmarks];
 
@@ -576,7 +608,7 @@ function App() {
       [destination.droppableId]: { ...destCol, bookmarks: destBookmarks },
     });
 
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.move(draggableId, {
         parentId: destination.droppableId,
         index: destination.index
@@ -591,13 +623,13 @@ function App() {
         const newTabs = [...tabs, title];
         setTabs(newTabs);
         if (folderId) setTabFolderIds(prev => ({ ...prev, [title]: folderId }));
-        if (typeof chrome !== 'undefined' && chrome.storage) {
+        if (hasChromeApi('storage')) {
           chrome.storage.local.set({ tabs: newTabs });
         }
         setActiveTab(title);
       };
 
-      if (hasChromeBookmarks()) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.create({ parentId: bookmarksBarId, title }, (newFolder) => {
           applyNewTab(newFolder.id);
         });
@@ -690,16 +722,6 @@ function App() {
     setActiveTabMenu(null);
   };
 
-  const getFaviconUrl = (url) => {
-    try {
-      const { hostname } = new URL(url);
-      if (!hostname || hostname === 'localhost') return '/favicon.svg';
-      return `https://www.google.com/s2/favicons?domain=${hostname}&sz=64`;
-    } catch {
-      return '/favicon.svg';
-    }
-  };
-
   const handleFaviconError = (e) => {
     e.currentTarget.onerror = null;
     e.currentTarget.src = '/favicon.svg';
@@ -716,7 +738,7 @@ function App() {
         
         const newBoardTabs = { ...boardTabs, [newFolderId]: activeTab };
         setBoardTabs(newBoardTabs);
-        if (typeof chrome !== 'undefined' && chrome.storage) {
+        if (hasChromeApi('storage')) {
           chrome.storage.local.set({ boardTabs: newBoardTabs });
         }
 
@@ -732,13 +754,13 @@ function App() {
             }
           };
           setBoardLayout2D(newBoardLayout2D);
-          if (typeof chrome !== 'undefined' && chrome.storage) {
+          if (hasChromeApi('storage')) {
             chrome.storage.local.set({ boardLayout2D: newBoardLayout2D });
           }
         }
       };
 
-      if (hasChromeBookmarks()) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.create({ parentId: tabFolderIds[activeTab] || bookmarksBarId, title: categoryInput }, (newFolder) => {
           processNewBoard(newFolder.id, newFolder.title);
         });
@@ -752,7 +774,7 @@ function App() {
 
   const handleDeleteBoard = (id) => {
     if (id === "1") return;
-    if (hasChromeBookmarks()) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.removeTree(id, () => {
         const newCols = { ...columns };
         delete newCols[id];
@@ -847,7 +869,7 @@ function App() {
       let url = inlineInputValue.trim();
       if (!url.startsWith('http')) url = 'https://' + url;
 
-      if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.create({ parentId: boardId, url: url, title: cleanTitle(url) }, (newBm) => {
           setColumns({
             ...columns,
@@ -870,7 +892,7 @@ function App() {
     const bm = columns[boardId].bookmarks.find(b => b.id === bmId);
     
     if (trashBoardId) {
-      if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.move(bmId, { parentId: trashBoardId }, () => {
           setColumns({
             ...columns,
@@ -886,7 +908,7 @@ function App() {
         });
       }
     } else {
-      if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.create({ parentId: "1", title: "[Trash]" }, (newFolder) => {
           setTrashBoardId(newFolder.id);
           chrome.bookmarks.move(bmId, { parentId: newFolder.id }, () => {
@@ -911,7 +933,7 @@ function App() {
 
   const handleRestoreBookmark = (bmId) => {
     const bm = columns[trashBoardId].bookmarks.find(b => b.id === bmId);
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.move(bmId, { parentId: "1" }, () => {
         setColumns({
           ...columns,
@@ -931,7 +953,7 @@ function App() {
   };
 
   const handlePermanentDeleteBookmark = (bmId) => {
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.remove(bmId, () => {
         setColumns({
           ...columns,
@@ -948,7 +970,7 @@ function App() {
 
   const handleEmptyTrash = () => {
     if (!trashBoardId || !columns[trashBoardId] || columns[trashBoardId].bookmarks.length === 0) return;
-    if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+    if (hasChromeApi('bookmarks')) {
       chrome.bookmarks.removeTree(trashBoardId, () => {
         const newCols = { ...columns };
         delete newCols[trashBoardId];
@@ -966,7 +988,7 @@ function App() {
   const handleSaveEditBookmark = (boardId) => {
     if (editUrlValue.trim() && editTitleValue.trim()) {
       const nextUrl = editUrlValue.trim().startsWith('http') ? editUrlValue.trim() : `https://${editUrlValue.trim()}`;
-      if (typeof chrome !== 'undefined' && chrome.bookmarks) {
+      if (hasChromeApi('bookmarks')) {
         chrome.bookmarks.update(editingBookmarkId, { title: editTitleValue.trim(), url: nextUrl }, (updatedBm) => {
           setColumns({
             ...columns,
@@ -1025,23 +1047,21 @@ function App() {
               ...styleSettingsToTheme(nextStyleSettings, effectiveTheme),
               background: { ...effectiveTheme.background, type: 'image', image: base64 },
             });
-            if (typeof chrome !== 'undefined' && chrome.storage) {
+            if (hasChromeApi('storage')) {
               chrome.storage.local.set({ wallpaper: base64 });
             }
             setIsWallpaperStyleOpen(true);
           })
-          .catch(e => console.error(e));
+          .catch(() => {
+            saveStyleSettings({
+              ...styleSettings,
+              boardColor: DEFAULT_STYLE_SETTINGS.boardColor,
+            });
+            setIsSettingsOpen(true);
+          });
       };
       reader.readAsDataURL(file);
     }
-  };
-
-  const hexToRgba = (hex, opacity) => {
-    if (!hex || hex.length !== 7) return `rgba(255, 255, 255, ${opacity / 100})`;
-    let r = parseInt(hex.slice(1, 3), 16),
-        g = parseInt(hex.slice(3, 5), 16),
-        b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${opacity / 100})`;
   };
 
   const mixHex = (hex, fallback, amount = 50) => {
@@ -1200,7 +1220,7 @@ function App() {
   const SettingToggle = ({ id, title, description }) => (
     <button
       onClick={() => saveUiSettings({ [id]: !uiSettings[id] })}
-      className="flex w-full items-center justify-between gap-4 rounded-[8px] px-2 py-2.5 text-left transition-colors hover:bg-white/10"
+      className={`flex w-full items-center justify-between gap-4 rounded-[8px] px-2 py-2.5 text-left transition-colors ${isDark ? 'hover:bg-white/5' : 'hover:bg-black/5'}`}
       aria-pressed={uiSettings[id]}
     >
       <div className="min-w-0">
@@ -1253,7 +1273,9 @@ function App() {
 
   const contrastRatio = getContrastRatio(draftTheme.colors.textPrimary, draftTheme.colors.surface);
   const appBackgroundImage = wallpaper ? `url(${wallpaper})` : effectiveTheme.background.gradient;
-  const appBackgroundSize = wallpaper ? 'cover' : (effectiveTheme.background.type === 'pattern' ? '18px 18px' : 'cover');
+  const appBackgroundSize = wallpaper
+    ? (styleSettings.wallpaperFit === 'fill' ? '100% 100%' : (styleSettings.wallpaperFit || 'cover'))
+    : (effectiveTheme.background.type === 'pattern' ? '18px 18px' : 'cover');
 
   const SettingsTabButton = ({ id, children }) => (
     <button
@@ -1378,10 +1400,50 @@ function App() {
   const LayoutStudio = () => (
     <div className={`${inputBg} ${inputBorder} rounded-[10px] border p-3`}>
       <div className={`mx-2 mb-1 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Layout</div>
+      <SettingToggle id="iconOnlyMode" title="Icon-only mode" description="Display bookmarks as a compact grid of icons without titles." />
+      {uiSettings.iconOnlyMode && (
+        <div className="mx-2 mb-2 flex items-center justify-between rounded-[8px] px-2 py-1.5">
+          <span className={`text-[13px] font-semibold leading-5 ${modalText}`}>Icons per row</span>
+          <div className="flex rounded-[8px] border p-0.5" style={{ backgroundColor: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)', borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+            {[3, 4].map(num => (
+              <button
+                key={num}
+                type="button"
+                onClick={() => saveUiSettings({ iconColumns: num })}
+                className={`w-8 rounded-[6px] py-1 text-[12px] font-semibold transition-all ${uiSettings.iconColumns === num ? 'shadow-sm' : 'opacity-60'}`}
+                style={{
+                  backgroundColor: uiSettings.iconColumns === num ? styleSettings.primaryColor : 'transparent',
+                  color: uiSettings.iconColumns === num ? '#ffffff' : (isDark ? '#e2e8f0' : '#475569')
+                }}
+              >
+                {num}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <SettingToggle id="compactMode" title="Compact mode" description="Reduce spacing to show more bookmarks." />
       <SettingToggle id="hideExtraBookmarks" title="Hide extra bookmarks in long boards" description="Show the first 8 bookmarks in dense boards." />
       <SettingToggle id="shortenLongTitles" title="Shorten long titles" description="Show bookmark titles on one line with ellipsis." />
       <AlignmentSetting settingKey="boardAlignment" title="Board alignment" description="Place boards left, center, right, or spread across the page." />
+      <div className={`mx-2 my-2 h-px ${isDark ? 'bg-white/10' : 'bg-black/10'}`} />
+      <SettingToggle id="showFavoritesDock" title="Show Favorites Dock" description="Display the macOS style dock at the bottom." />
+      <div className={`mx-2 flex flex-col gap-2 rounded-[8px] py-2 ${uiSettings.showFavoritesDock ? 'opacity-100' : 'pointer-events-none opacity-50'}`}>
+        <div className="flex items-center justify-between">
+          <span className={`text-[13px] font-semibold leading-5 ${modalText}`}>Dock Size</span>
+          <span className={`text-[12px] font-medium ${isDark ? 'text-white/60' : 'text-black/50'}`}>{uiSettings.dockSize}px</span>
+        </div>
+        <input
+          type="range"
+          min="40"
+          max="104"
+          step="16"
+          value={uiSettings.dockSize}
+          onChange={(event) => saveUiSettings({ dockSize: Number(event.target.value) })}
+          className={`h-1.5 w-full cursor-pointer appearance-none rounded-full ${isDark ? 'bg-white/10' : 'bg-black/10'}`}
+          style={{ accentColor: styleSettings.primaryColor }}
+        />
+      </div>
     </div>
   );
 
@@ -1416,6 +1478,7 @@ function App() {
   );
 
   return (
+    <DragDropContext onDragStart={() => setIsDraggingAny(true)} onDragEnd={onDragEnd}>
     <div 
       className="min-h-screen transition-all duration-500 overflow-hidden font-sans"
       style={{
@@ -1578,7 +1641,6 @@ function App() {
         </div>
 
         {/* Kanban Board Container (Now Draggable!) */}
-        <DragDropContext onDragStart={() => setIsDraggingAny(true)} onDragEnd={onDragEnd}>
           <div
             data-testid="board-canvas"
             className={`grid w-full ${uiSettings.compactMode ? 'gap-2.5 sm:gap-4' : 'gap-3 sm:gap-6'} flex-1 items-start overflow-hidden pb-24 sm:pb-8 min-h-0 no-scrollbar`}
@@ -1637,7 +1699,7 @@ function App() {
                                       <div className={`flex min-h-7 items-center justify-between gap-1 ${uiSettings.compactMode ? 'mb-0.5' : 'mb-1'} sm:min-h-0 sm:gap-2 sm:mb-2`}>
                                         <div
                                           {...boardProvided.dragHandleProps}
-                                          className="flex min-w-0 flex-1 cursor-grab touch-none items-center gap-1.5 rounded-md active:cursor-grabbing"
+                                          className="flex min-w-0 flex-1 cursor-grab touch-none select-none items-center gap-1.5 rounded-md active:cursor-grabbing"
                                           title="Hold and drag board"
                                           aria-label={`Drag board ${column.title}`}
                                         >
@@ -1656,7 +1718,7 @@ function App() {
                                               style={{ color: isDark ? '#ffffff' : '#1e293b' }}
                                             />
                                           ) : (
-                                            <div className="min-w-0 truncate text-[11px] font-medium leading-4 sm:text-[15px] sm:font-semibold" style={{ color: isDark ? '#ffffff' : '#1e293b' }}>
+                                            <div className="min-w-0 truncate text-[11px] font-medium leading-4 sm:text-[15px] sm:font-semibold select-none" style={{ color: isDark ? '#ffffff' : '#1e293b' }}>
                                               {column.title}
                                             </div>
                                           )}
@@ -1686,7 +1748,10 @@ function App() {
 
                                       <div className={`${uiSettings.compactMode ? 'mb-0.5 sm:mb-2' : 'mb-1 sm:mb-3'} h-px w-full`} style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }}></div>
 
-                                        <div className={`flex-1 flex flex-col ${uiSettings.compactMode ? 'gap-0' : 'gap-0.5'} relative`}>
+                                        <div 
+                                          className={`flex-1 ${uiSettings.iconOnlyMode ? 'grid content-start gap-1 sm:gap-2' : `flex flex-col ${uiSettings.compactMode ? 'gap-0' : 'gap-0.5'}`} relative`}
+                                          style={uiSettings.iconOnlyMode ? { gridTemplateColumns: `repeat(${uiSettings.iconColumns || 4}, minmax(0, 1fr))` } : {}}
+                                        >
                                           {displayColumns[column.id].bookmarks.map((bookmark, idx) => (
                                           <Draggable key={bookmark.id} draggableId={bookmark.id} index={idx} isDragDisabled={editingBookmarkId === bookmark.id}>
                                             {(bookmarkProvided, bookmarkSnapshot) => (
@@ -1696,7 +1761,14 @@ function App() {
                                                 {...bookmarkProvided.dragHandleProps}
                                                 className={`group/bookmark relative flex touch-none items-center gap-1 px-0.5 py-0.5 sm:gap-2 ${uiSettings.compactMode ? 'sm:py-1 sm:px-1.5' : 'sm:py-1.5 sm:px-2'} rounded-lg select-none transition-colors ${
                                                   bookmarkSnapshot.isDragging ? 'z-50 shadow-xl bg-white/15 dark:bg-white/15 cursor-grabbing' : 'cursor-grab hover:bg-black/5 active:cursor-grabbing dark:hover:bg-white/10'
-                                                }`}
+                                                } ${uiSettings.iconOnlyMode ? 'justify-self-center p-2 sm:p-2.5' : ''}`}
+                                                title={uiSettings.iconOnlyMode ? cleanTitle(bookmark.title) : undefined}
+                                                onContextMenu={(e) => {
+                                                  if (uiSettings.iconOnlyMode) {
+                                                    e.preventDefault();
+                                                    setActiveContextMenuId(activeContextMenuId === bookmark.id ? null : bookmark.id);
+                                                  }
+                                                }}
                                               >
                                                 {editingBookmarkId === bookmark.id ? (
                                                   <div
@@ -1741,55 +1813,84 @@ function App() {
                                                 ) : (
                                                   <>
                                                     <img 
-                                                      src={getFaviconUrl(bookmark.url)}
-                                                      onError={(e) => handleFaviconError(e, bookmark.url)}
+                                                      src={getFaviconUrl(bookmark.url, 64)}
+                                                      onError={handleFaviconError}
                                                       alt=""
                                                       draggable={false}
-                                                      className="h-4 w-4 shrink-0 rounded-[4px] bg-white/10 object-contain sm:h-[20px] sm:w-[20px]"
+                                                      className={`${uiSettings.iconOnlyMode ? (uiSettings.iconColumns === 3 ? 'h-8 w-8 sm:h-10 sm:w-10' : 'h-6 w-6 sm:h-7 sm:w-7') : 'h-4 w-4 sm:h-[20px] sm:w-[20px]'} shrink-0 rounded-[4px] object-contain transition-transform duration-200 group-hover/bookmark:scale-110`}
                                                     />
-                                                    <a 
-                                                      href={bookmark.url} 
-                                                      draggable={false}
-                                                      target={uiSettings.openLinksInNewTab ? '_blank' : undefined}
-                                                      rel={uiSettings.openLinksInNewTab ? 'noreferrer' : undefined}
-                                                      onClick={(e) => {
-                                                        if (isIncognito) {
-                                                          e.preventDefault();
-                                                          if (typeof chrome !== 'undefined' && chrome.windows) {
-                                                            chrome.windows.create({ url: bookmark.url, incognito: true });
-                                                          } else {
-                                                            alert('Incognito mode requires Chrome Extension API. Opening normally in new tab.');
-                                                            window.open(bookmark.url, '_blank');
+                                                    {uiSettings.iconOnlyMode && (
+                                                      <a 
+                                                        href={bookmark.url}
+                                                        className="absolute inset-0 z-10"
+                                                        target={uiSettings.openLinksInNewTab ? '_blank' : undefined}
+                                                        rel={uiSettings.openLinksInNewTab ? 'noreferrer' : undefined}
+                                                        draggable={false}
+                                                        onClick={(e) => {
+                                                          if (isIncognito) {
+                                                            e.preventDefault();
+                                                            if (hasChromeApi('windows')) {
+                                                              chrome.windows.create({ url: bookmark.url, incognito: true });
+                                                            } else {
+                                                              alert('Incognito mode requires Chrome Extension API. Opening normally in new tab.');
+                                                              window.open(bookmark.url, '_blank');
+                                                            }
                                                           }
-                                                        }
-                                                      }}
-                                                      className={`text-[10.5px] font-[400] transition-all flex-1 min-w-0 sm:text-[13px] sm:group-hover/bookmark:pr-14 ${isDark ? 'text-white/80 hover:text-white' : 'text-slate-700 hover:text-black'}`}
-                                                    >
-                                                      <span className={uiSettings.shortenLongTitles ? 'block truncate' : 'block break-words leading-snug'}>
-                                                        {cleanTitle(bookmark.title)}
-                                                      </span>
-                                                      {uiSettings.showBookmarkDescriptions && (
-                                                        <span className={`block truncate text-[10px] leading-3 ${isDark ? 'text-white/45' : 'text-slate-500'}`}>
-                                                          {getBookmarkHost(bookmark.url)}
+                                                        }}
+                                                      />
+                                                    )}
+                                                    {!uiSettings.iconOnlyMode && (
+                                                      <a 
+                                                        href={bookmark.url} 
+                                                        draggable={false}
+                                                        target={uiSettings.openLinksInNewTab ? '_blank' : undefined}
+                                                        rel={uiSettings.openLinksInNewTab ? 'noreferrer' : undefined}
+                                                        onClick={(e) => {
+                                                          if (isIncognito) {
+                                                            e.preventDefault();
+                                                            if (hasChromeApi('windows')) {
+                                                              chrome.windows.create({ url: bookmark.url, incognito: true });
+                                                            } else {
+                                                              alert('Incognito mode requires Chrome Extension API. Opening normally in new tab.');
+                                                              window.open(bookmark.url, '_blank');
+                                                            }
+                                                          }
+                                                        }}
+                                                        className={`text-[10.5px] font-[400] transition-all flex-1 min-w-0 sm:text-[13px] sm:group-hover/bookmark:pr-14 ${isDark ? 'text-white/80 hover:text-white' : 'text-slate-700 hover:text-black'}`}
+                                                      >
+                                                        <span className={uiSettings.shortenLongTitles ? 'block truncate' : 'block break-words leading-snug'}>
+                                                          {cleanTitle(bookmark.title)}
                                                         </span>
-                                                      )}
-                                                    </a>
+                                                        {uiSettings.showBookmarkDescriptions && (
+                                                          <span className={`block truncate text-[10px] leading-3 ${isDark ? 'text-white/45' : 'text-slate-500'}`}>
+                                                            {getBookmarkHost(bookmark.url)}
+                                                          </span>
+                                                        )}
+                                                      </a>
+                                                    )}
                                                     
-                                                    {/* Inline Hover Actions */}
-                                                    <div className={`absolute right-2 opacity-0 group-hover/bookmark:opacity-100 flex items-center gap-2 transition-opacity`}>
+                                                    {/* Inline Actions */}
+                                                    <div className={`absolute ${uiSettings.iconOnlyMode ? 'inset-x-0 -bottom-1.5 justify-center z-20 gap-1 context-menu-actions transition-all duration-200' : 'right-2 gap-2 opacity-0 group-hover/bookmark:opacity-100 transition-opacity pointer-events-none group-hover/bookmark:pointer-events-auto'} ${uiSettings.iconOnlyMode ? (activeContextMenuId === bookmark.id ? 'flex opacity-100 scale-100 pointer-events-auto' : 'flex opacity-0 scale-95 pointer-events-none') : 'flex'} items-center`}>
                                                       <button 
                                                         onMouseDown={(e) => e.stopPropagation()}
-                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingBookmarkId(bookmark.id); setEditTitleValue(bookmark.title || ''); setEditUrlValue(bookmark.url || ''); }}
-                                                        className={`text-slate-400/80 transition-colors ${isDark ? 'hover:text-white' : 'hover:text-slate-900'}`}
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveContextMenuId(null); toggleFavorite(bookmark.id); }}
+                                                        className={`transition-colors ${favoriteBookmarkIds.includes(bookmark.id) ? 'text-yellow-400 hover:text-yellow-500' : (isDark || uiSettings.iconOnlyMode ? 'hover:text-white text-slate-300' : 'hover:text-slate-900 text-slate-500')} ${uiSettings.iconOnlyMode ? 'bg-black/80 shadow-md rounded-full p-1 border border-white/10' : ''}`}
                                                       >
-                                                        <Pencil size={14} strokeWidth={2} />
+                                                        <Star size={uiSettings.iconOnlyMode ? 10 : 14} strokeWidth={uiSettings.iconOnlyMode ? 2.5 : 2} fill={favoriteBookmarkIds.includes(bookmark.id) ? 'currentColor' : 'none'} />
                                                       </button>
                                                       <button 
                                                         onMouseDown={(e) => e.stopPropagation()}
-                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteBookmark(column.id, bookmark.id); }}
-                                                        className="text-red-400/80 hover:text-red-500 transition-colors"
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveContextMenuId(null); setEditingBookmarkId(bookmark.id); setEditTitleValue(bookmark.title || ''); setEditUrlValue(bookmark.url || ''); }}
+                                                        className={`transition-colors ${isDark || uiSettings.iconOnlyMode ? 'hover:text-white text-slate-300' : 'hover:text-slate-900 text-slate-500'} ${uiSettings.iconOnlyMode ? 'bg-black/80 shadow-md rounded-full p-1 border border-white/10' : ''}`}
                                                       >
-                                                        <Trash2 size={14} strokeWidth={2} />
+                                                        <Pencil size={uiSettings.iconOnlyMode ? 10 : 14} strokeWidth={uiSettings.iconOnlyMode ? 2.5 : 2} />
+                                                      </button>
+                                                      <button 
+                                                        onMouseDown={(e) => e.stopPropagation()}
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveContextMenuId(null); handleDeleteBookmark(column.id, bookmark.id); }}
+                                                        className={`text-red-400/90 hover:text-red-500 transition-colors ${uiSettings.iconOnlyMode ? 'bg-black/80 shadow-md rounded-full p-1 border border-white/10' : ''}`}
+                                                      >
+                                                        <Trash2 size={uiSettings.iconOnlyMode ? 10 : 14} strokeWidth={uiSettings.iconOnlyMode ? 2.5 : 2} />
                                                       </button>
                                                     </div>
                                                   </>
@@ -1915,15 +2016,14 @@ function App() {
                           />
                           <button 
                             onClick={handleAddCategoryConfirm} 
-                            className="shrink-0 px-3 py-1.5 rounded-[8px] font-semibold text-[12px] hover:scale-105 active:scale-95 transition-all shadow-sm"
-                            style={{ backgroundColor: '#e2d5bd', color: '#1e293b' }}
+                            className="shrink-0 px-3 py-1.5 rounded-[8px] font-semibold text-[12px] hover:scale-105 active:scale-95 transition-all shadow-sm text-white"
+                            style={{ backgroundColor: styleSettings.primaryColor }}
                           >
                             Add
                           </button>
                           <button 
                             onClick={() => setActiveAddBoardColIndex(null)} 
-                            className="shrink-0 w-[28px] h-[28px] flex items-center justify-center rounded-[8px] hover:scale-105 active:scale-95 transition-all shadow-sm"
-                            style={{ backgroundColor: '#4a2525', color: '#f76b6b', border: '1px solid rgba(255,255,255,0.05)' }}
+                            className={`shrink-0 w-[28px] h-[28px] flex items-center justify-center rounded-[8px] hover:scale-105 active:scale-95 transition-all shadow-sm ${isDark ? 'bg-white/10 text-white/70 hover:text-white border border-white/10' : 'bg-black/5 text-slate-600 hover:text-slate-900 border border-black/5'}`}
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                           </button>
@@ -1936,7 +2036,6 @@ function App() {
               ));
             })()}
           </div>
-        </DragDropContext>
       </div>
 
       {/* Floating Action Bar */}
@@ -2188,6 +2287,26 @@ function App() {
               </div>
               <div>
                 <div className="flex justify-between items-center mb-3">
+                  <span className={`text-[13px] font-medium ${modalText}`}>Wallpaper Fit</span>
+                </div>
+                <div className="flex rounded-lg overflow-hidden border border-black/10">
+                  {['cover', 'contain', 'fill'].map((fit) => (
+                    <button
+                      key={fit}
+                      onClick={() => saveStyleSettings({...styleSettings, wallpaperFit: fit})}
+                      className={`flex-1 py-1.5 text-[12px] font-medium transition-colors ${(styleSettings.wallpaperFit || 'cover') === fit ? 'shadow-sm' : 'opacity-70'}`}
+                      style={{ 
+                        backgroundColor: (styleSettings.wallpaperFit || 'cover') === fit ? styleSettings.primaryColor : 'transparent',
+                        color: (styleSettings.wallpaperFit || 'cover') === fit ? '#ffffff' : (isDark ? '#e2e8f0' : '#475569') 
+                      }}
+                    >
+                      {fit.charAt(0).toUpperCase() + fit.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-3">
                   <span className={`text-[13px] font-medium ${modalText}`}>Blur Amount</span>
                   <span className={`text-[13px] font-medium ${modalSubText}`}>{styleSettings.boardBlur}px</span>
                 </div>
@@ -2282,7 +2401,7 @@ function App() {
                 trashBookmarks.map(bm => (
                   <div key={bm.id} className={`${inputBg} ${inputBorder} flex items-center justify-between rounded-[8px] border px-3 py-2.5`}>
                     <div className="flex items-center gap-3 overflow-hidden">
-                      <img src={getFaviconUrl(bm.url)} onError={handleFaviconError} className="w-5 h-5 rounded shrink-0" alt=""/>
+                      <img src={getFaviconUrl(bm.url, 32)} onError={handleFaviconError} className="w-5 h-5 rounded shrink-0" alt=""/>
                       <span className={`text-[13px] font-semibold truncate ${modalText}`}>{bm.title}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -2302,7 +2421,64 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* MacOS Dock */}
+      {uiSettings.showFavoritesDock && (
+      <Droppable droppableId="favorites-dock" direction="horizontal" isDropDisabled={false}>
+        {(provided, snapshot) => {
+          // Compute favorite apps dynamically
+          const favoriteApps = favoriteBookmarkIds.map(id => {
+            for (const col of Object.values(columns)) {
+              const bm = col.bookmarks.find(b => b.id === id);
+              if (bm) {
+                return {
+                  id: bm.id,
+                  name: bm.title,
+                  icon: getFaviconUrl(bm.url, 128)
+                };
+              }
+            }
+            return null;
+          }).filter(Boolean);
+
+          if (favoriteApps.length === 0 && !snapshot.isDraggingOver) {
+            return (
+              <div ref={provided.innerRef} {...provided.droppableProps} className="hidden">
+                 {provided.placeholder}
+              </div>
+            );
+          }
+
+          return (
+            <div 
+              ref={provided.innerRef} 
+              {...provided.droppableProps}
+              className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-40 transition-transform ${snapshot.isDraggingOver ? 'scale-105' : 'scale-100'}`}
+            >
+              <MacOSDock
+                apps={favoriteApps}
+                size={uiSettings.dockSize}
+                onAppClick={(appId) => {
+                  const app = favoriteApps.find(a => a.id === appId);
+                  if (app) {
+                    const originalCol = Object.values(columns).find(c => c.bookmarks.some(b => b.id === appId));
+                    const originalBm = originalCol?.bookmarks.find(b => b.id === appId);
+                    if (originalBm) {
+                      window.open(originalBm.url, uiSettings.openLinksInNewTab ? '_blank' : '_self');
+                    }
+                  }
+                  handleDockAppClick(appId);
+                }}
+                openApps={openDockApps}
+              />
+              <div className="hidden">{provided.placeholder}</div>
+            </div>
+          );
+        }}
+      </Droppable>
+      )}
     </div>
+    </DragDropContext>
   )
 }
 

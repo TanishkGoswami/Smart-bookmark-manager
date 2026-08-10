@@ -12,12 +12,15 @@
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
+    "@tanstack/react-virtual": "^3.14.9",
     "clsx": "^2.1.1",
+    "dexie": "^4.4.4",
     "fast-average-color": "^9.5.2",
     "lucide-react": "^1.27.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.7.1",
