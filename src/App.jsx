@@ -7,6 +7,8 @@ import {
   MoreVertical, Menu, Link2, ExternalLink, RefreshCw, Pencil, Share2, Check, X, ChevronDown,
   AlignLeft, AlignCenter, AlignRight, AlignJustify, Globe2, FileText
 } from 'lucide-react'
+import { useTheme } from './theme/themeContext.js'
+import { getContrastRatio, styleSettingsToTheme } from './theme/themeCore.js'
 
 const fac = new FastAverageColor();
 const DEFAULT_TABS = ['Home', 'Work', 'Personal'];
@@ -23,6 +25,18 @@ const DEFAULT_UI_SETTINGS = {
 };
 
 function App() {
+  const {
+    draftTheme,
+    effectiveTheme,
+    presetThemes,
+    styleSettings: themeStyleSettings,
+    updateDraftTheme,
+    previewPreset,
+    publishTheme,
+    cancelThemeDraft,
+    saveThemeDraft,
+    resetTheme,
+  } = useTheme();
   const [columns, setColumns] = useState({});
   const [columnOrder, setColumnOrder] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -30,13 +44,7 @@ function App() {
   const [numCols, setNumCols] = useState(4);
   
   // Dynamic Styles State
-  const [styleSettings, setStyleSettings] = useState({
-    primaryColor: '#8a2b34',
-    boardColor: '#a18b8c',
-    boardOpacity: 85,
-    boardBlur: 24,
-    isDarkBg: true
-  });
+  const [styleSettings, setStyleSettings] = useState(themeStyleSettings);
 
   const fileInputRef = useRef(null);
   const importFileInputRef = useRef(null);
@@ -44,6 +52,7 @@ function App() {
   // Modals & Menus State
   const [activeAddBoardColIndex, setActiveAddBoardColIndex] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState('general');
   const [isWallpaperStyleOpen, setIsWallpaperStyleOpen] = useState(false);
   const [isToolMenuOpen, setIsToolMenuOpen] = useState(false);
   const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
@@ -70,6 +79,10 @@ function App() {
     setIsSearchOpen(false);
     setSearchQuery('');
   };
+
+  useEffect(() => {
+    setStyleSettings(themeStyleSettings);
+  }, [themeStyleSettings]);
   
   // Navigation Tabs State
   const [activeTab, setActiveTab] = useState('Home');
@@ -281,6 +294,7 @@ function App() {
 
   const saveStyleSettings = (newSettings) => {
     setStyleSettings(newSettings);
+    publishTheme(styleSettingsToTheme(newSettings, effectiveTheme));
     if (typeof chrome !== 'undefined' && chrome.storage) {
       chrome.storage.local.set({ styleSettings: newSettings });
     }
@@ -978,18 +992,38 @@ function App() {
   const handleWallpaperUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      if (!file.type.startsWith('image/')) {
+        alert('Please choose a valid image file.');
+        e.target.value = '';
+        return;
+      }
+      if (file.size > 4 * 1024 * 1024) {
+        alert('Wallpaper must be 4 MB or smaller.');
+        e.target.value = '';
+        return;
+      }
       const reader = new FileReader();
       reader.onload = (event) => {
         const base64 = event.target.result;
+        if (typeof base64 !== 'string' || base64.length > 6_000_000) {
+          alert('Wallpaper is too large after encoding.');
+          e.target.value = '';
+          return;
+        }
         setWallpaper(base64);
         
         fac.getColorAsync(base64)
           .then(color => {
-            saveStyleSettings({
+            const nextStyleSettings = {
               ...styleSettings,
               primaryColor: color.hex,
               boardColor: color.isDark ? '#2A2C31' : '#FFFFFF',
               isDarkBg: color.isDark
+            };
+            saveStyleSettings(nextStyleSettings);
+            publishTheme({
+              ...styleSettingsToTheme(nextStyleSettings, effectiveTheme),
+              background: { ...effectiveTheme.background, type: 'image', image: base64 },
             });
             if (typeof chrome !== 'undefined' && chrome.storage) {
               chrome.storage.local.set({ wallpaper: base64 });
@@ -1217,13 +1251,177 @@ function App() {
     </div>
   );
 
+  const contrastRatio = getContrastRatio(draftTheme.colors.textPrimary, draftTheme.colors.surface);
+  const appBackgroundImage = wallpaper ? `url(${wallpaper})` : effectiveTheme.background.gradient;
+  const appBackgroundSize = wallpaper ? 'cover' : (effectiveTheme.background.type === 'pattern' ? '18px 18px' : 'cover');
+
+  const SettingsTabButton = ({ id, children }) => (
+    <button
+      type="button"
+      data-testid={`settings-${id}-tab`}
+      onClick={() => setSettingsTab(id)}
+      className="rounded-[8px] px-3 py-2 text-[12px] font-semibold transition-colors"
+      style={{
+        backgroundColor: settingsTab === id ? styleSettings.primaryColor : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'),
+        color: settingsTab === id ? '#ffffff' : (isDark ? '#dbe3ee' : '#334155'),
+      }}
+    >
+      {children}
+    </button>
+  );
+
+  const ColorField = ({ label, value, onChange }) => (
+    <label className={`${inputBg} ${inputBorder} flex items-center justify-between gap-3 rounded-[8px] border px-3 py-2`}>
+      <span className={`text-[12px] font-semibold ${modalText}`}>{label}</span>
+      <span className="flex items-center gap-2">
+        <span className={`text-[11px] font-medium ${modalSubText}`}>{value}</span>
+        <input
+          type="color"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-8 w-9 cursor-pointer rounded border-0 bg-transparent p-0"
+        />
+      </span>
+    </label>
+  );
+
+  const RangeField = ({ label, value, min, max, suffix = '', onChange }) => (
+    <label className={`${inputBg} ${inputBorder} block rounded-[8px] border px-3 py-2`}>
+      <span className="mb-2 flex items-center justify-between">
+        <span className={`text-[12px] font-semibold ${modalText}`}>{label}</span>
+        <span className={`text-[11px] font-medium ${modalSubText}`}>{value}{suffix}</span>
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className={`h-1.5 w-full cursor-pointer appearance-none rounded-lg ${isDark ? 'bg-white/10' : 'bg-slate-200'}`}
+        style={{ accentColor: styleSettings.primaryColor }}
+      />
+    </label>
+  );
+
+  const publishDraftTheme = () => {
+    publishTheme(draftTheme);
+    saveUiSettings({
+      compactMode: draftTheme.layout.density === 'compact',
+      boardAlignment: draftTheme.layout.boardAlignment,
+      showBookmarkDescriptions: draftTheme.cards.showDescriptions,
+      shortenLongTitles: draftTheme.cards.shortenLongTitles,
+      hideExtraBookmarks: draftTheme.cards.hideExtraBookmarks,
+    });
+  };
+
+  const ThemeStudio = () => (
+    <div className="space-y-4" data-testid="theme-studio">
+      <div className={`${inputBg} ${inputBorder} rounded-[10px] border p-3`}>
+        <div className={`mx-2 mb-3 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Presets</div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {presetThemes.map(theme => (
+            <button
+              key={theme.id}
+              type="button"
+              data-testid={`theme-preset-${theme.id}`}
+              onClick={() => previewPreset(theme)}
+              className="rounded-[8px] border p-2 text-left transition-transform hover:-translate-y-0.5"
+              style={{
+                background: theme.background.gradient,
+                borderColor: draftTheme.id === theme.id ? styleSettings.primaryColor : (isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)'),
+                color: theme.colors.textPrimary,
+              }}
+            >
+              <span className="block truncate text-[12px] font-bold">{theme.name}</span>
+              <span className="mt-2 flex gap-1">
+                {[theme.colors.primary, theme.colors.surface, theme.colors.background].map(color => (
+                  <span key={color} className="h-4 w-4 rounded-full border border-black/10" style={{ backgroundColor: color }} />
+                ))}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={`${inputBg} ${inputBorder} rounded-[10px] border p-3`}>
+        <div className={`mx-2 mb-3 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Colors</div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <ColorField label="Primary" value={draftTheme.colors.primary} onChange={(primary) => updateDraftTheme({ colors: { primary, focus: primary } })} />
+          <ColorField label="Surface" value={draftTheme.colors.surface} onChange={(surface) => updateDraftTheme({ colors: { surface } })} />
+          <ColorField label="Text" value={draftTheme.colors.textPrimary} onChange={(textPrimary) => updateDraftTheme({ colors: { textPrimary } })} />
+          <ColorField label="Border" value={draftTheme.colors.border} onChange={(border) => updateDraftTheme({ colors: { border } })} />
+        </div>
+        <div className={`mt-3 rounded-[8px] px-3 py-2 text-[12px] font-semibold ${contrastRatio >= 4.5 ? 'text-green-500' : 'text-amber-500'}`}>
+          Surface/text contrast: {contrastRatio}:1 {contrastRatio >= 4.5 ? 'passes AA' : 'needs stronger contrast'}
+        </div>
+      </div>
+
+      <div className={`${inputBg} ${inputBorder} rounded-[10px] border p-3`}>
+        <div className={`mx-2 mb-3 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Effects</div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <RangeField label="Board opacity" value={draftTheme.effects.boardOpacity} min={35} max={100} suffix="%" onChange={(boardOpacity) => updateDraftTheme({ effects: { boardOpacity } })} />
+          <RangeField label="Board blur" value={draftTheme.effects.boardBlur} min={0} max={32} suffix="px" onChange={(boardBlur) => updateDraftTheme({ effects: { boardBlur } })} />
+          <RangeField label="Card radius" value={draftTheme.layout.cardRadius} min={4} max={18} suffix="px" onChange={(cardRadius) => updateDraftTheme({ layout: { cardRadius } })} />
+          <RangeField label="Card padding" value={draftTheme.layout.cardPadding} min={8} max={22} suffix="px" onChange={(cardPadding) => updateDraftTheme({ layout: { cardPadding } })} />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap justify-end gap-2">
+        <button type="button" onClick={cancelThemeDraft} className={`rounded-[8px] px-4 py-2 text-[12px] font-semibold ${isDark ? 'bg-white/10 text-slate-200' : 'bg-black/5 text-slate-700'}`}>Cancel</button>
+        <button type="button" onClick={saveThemeDraft} className={`rounded-[8px] px-4 py-2 text-[12px] font-semibold ${isDark ? 'bg-white/10 text-slate-200' : 'bg-black/5 text-slate-700'}`}>Save Draft</button>
+        <button type="button" onClick={resetTheme} className="rounded-[8px] px-4 py-2 text-[12px] font-semibold text-red-500 hover:bg-red-500/10">Reset</button>
+        <button type="button" data-testid="save-theme" onClick={publishDraftTheme} className="rounded-[8px] px-4 py-2 text-[12px] font-semibold text-white" style={{ backgroundColor: styleSettings.primaryColor }}>Save Theme</button>
+      </div>
+    </div>
+  );
+
+  const LayoutStudio = () => (
+    <div className={`${inputBg} ${inputBorder} rounded-[10px] border p-3`}>
+      <div className={`mx-2 mb-1 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Layout</div>
+      <SettingToggle id="compactMode" title="Compact mode" description="Reduce spacing to show more bookmarks." />
+      <SettingToggle id="hideExtraBookmarks" title="Hide extra bookmarks in long boards" description="Show the first 8 bookmarks in dense boards." />
+      <SettingToggle id="shortenLongTitles" title="Shorten long titles" description="Show bookmark titles on one line with ellipsis." />
+      <AlignmentSetting settingKey="boardAlignment" title="Board alignment" description="Place boards left, center, right, or spread across the page." />
+    </div>
+  );
+
+  const AccessibilityStudio = () => (
+    <div className={`${inputBg} ${inputBorder} rounded-[10px] border p-3`}>
+      <div className={`mx-2 mb-3 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Accessibility</div>
+      {[
+        ['reducedMotion', 'Reduced motion', 'Disable heavy transitions and preview motion.'],
+        ['highContrast', 'High contrast', 'Prefer stronger text and surface separation.'],
+        ['strongFocus', 'Strong focus outlines', 'Make keyboard focus easier to see.'],
+      ].map(([key, title, description]) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => updateDraftTheme({ accessibility: { [key]: !draftTheme.accessibility[key] } })}
+          className="flex w-full items-center justify-between gap-4 rounded-[8px] px-2 py-2.5 text-left transition-colors hover:bg-white/10"
+          aria-pressed={draftTheme.accessibility[key]}
+        >
+          <span className="min-w-0">
+            <span className={`block text-[13px] font-semibold leading-5 ${modalText}`}>{title}</span>
+            <span className={`block text-[11px] leading-4 ${modalSubText}`}>{description}</span>
+          </span>
+          <span className="h-6 w-11 shrink-0 rounded-full p-0.5 transition-colors" style={{ backgroundColor: draftTheme.accessibility[key] ? styleSettings.primaryColor : (isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.16)') }}>
+            <span className={`block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${draftTheme.accessibility[key] ? 'translate-x-5' : 'translate-x-0'}`} />
+          </span>
+        </button>
+      ))}
+      <div className="mt-3 flex justify-end">
+        <button type="button" onClick={publishDraftTheme} className="rounded-[8px] px-4 py-2 text-[12px] font-semibold text-white" style={{ backgroundColor: styleSettings.primaryColor }}>Save Accessibility</button>
+      </div>
+    </div>
+  );
+
   return (
     <div 
       className="min-h-screen transition-all duration-500 overflow-hidden font-sans"
       style={{
-        backgroundColor: wallpaper ? 'transparent' : '#111111',
-        backgroundImage: wallpaper ? `url(${wallpaper})` : 'none',
-        backgroundSize: 'cover',
+        backgroundColor: effectiveTheme.colors.background,
+        backgroundImage: appBackgroundImage,
+        backgroundSize: appBackgroundSize,
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat'
       }}
@@ -1414,6 +1612,7 @@ function App() {
                                   ...boardProvided.draggableProps.style,
                                   backgroundColor: hexToRgba(styleSettings.boardColor, isMobileLayout ? Math.min(styleSettings.boardOpacity, 72) : styleSettings.boardOpacity),
                                   border: boardSnapshot.isDragging ? '0.5px solid transparent' : (isDark ? '0.5px solid rgba(255,255,255,0.12)' : '0.5px solid rgba(0,0,0,0.08)'),
+                                  borderRadius: 'var(--radius-card)',
                                   boxShadow: boardSnapshot.isDragging ? '0 24px 48px rgba(0,0,0,0.4)' : '0 8px 32px rgba(0,0,0,0.08)'
                                 }}
                               >
@@ -1421,6 +1620,7 @@ function App() {
                                   aria-hidden="true"
                                   className="pointer-events-none absolute inset-0 rounded-[10px]"
                                   style={{
+                                    borderRadius: 'var(--radius-card)',
                                     backdropFilter: isDraggingAny ? 'none' : `blur(${isMobileLayout ? Math.min(styleSettings.boardBlur, 10) : styleSettings.boardBlur}px) saturate(150%)`,
                                     WebkitBackdropFilter: isDraggingAny ? 'none' : `blur(${isMobileLayout ? Math.min(styleSettings.boardBlur, 10) : styleSettings.boardBlur}px) saturate(150%)`
                                   }}
@@ -1907,31 +2107,36 @@ function App() {
             }}
           >
             <div className="mb-4 flex shrink-0 items-center justify-between">
-              <h3 className={`text-[22px] font-semibold leading-none ${modalText}`}>General Settings</h3>
+              <h3 className={`text-[22px] font-semibold leading-none ${modalText}`}>Settings</h3>
               <button onClick={() => setIsSettingsOpen(false)} className={`grid h-8 w-8 place-items-center rounded-[8px] transition-colors ${isDark ? 'bg-white/10 text-white/70 hover:bg-white/15 hover:text-white' : 'bg-black/5 text-slate-500 hover:bg-black/10 hover:text-slate-900'}`}>
                 <X size={18} strokeWidth={2.4} />
               </button>
             </div>
+            <div className="mb-4 flex shrink-0 flex-wrap gap-2">
+              <SettingsTabButton id="general">General</SettingsTabButton>
+              <SettingsTabButton id="theme">Theme</SettingsTabButton>
+              <SettingsTabButton id="layout">Layout</SettingsTabButton>
+              <SettingsTabButton id="accessibility">Accessibility</SettingsTabButton>
+            </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))] no-scrollbar">
-              <div className={`${inputBg} ${inputBorder} mb-4 rounded-[10px] border p-3`}>
-                <div className={`mx-2 mb-1 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Appearance</div>
-                <SettingToggle id="compactMode" title="Compact mode" description="Reduce spacing to show more bookmarks." />
-                <SettingToggle id="groupRightTools" title="Group right-side tools" description="Keep Search and Settings visible, and place other tools in one menu." />
-                <SettingToggle id="hideExtraBookmarks" title="Hide extra bookmarks in long boards" description="Show the first 8 bookmarks in dense boards." />
-                <SettingToggle id="shortenLongTitles" title="Shorten long titles" description="Show bookmark titles on one line with ellipsis." />
-                <AlignmentSetting
-                  settingKey="boardAlignment"
-                  title="Board alignment"
-                  description="Place boards left, center, right, or spread across the page."
-                />
-              </div>
+              {settingsTab === 'general' && (
+                <div className="space-y-4">
+                  <div className={`${inputBg} ${inputBorder} rounded-[10px] border p-3`}>
+                    <div className={`mx-2 mb-1 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Appearance</div>
+                    <SettingToggle id="groupRightTools" title="Group right-side tools" description="Keep Search and Settings visible, and place other tools in one menu." />
+                    <SettingToggle id="showBookmarkDescriptions" title="Show bookmark descriptions" description="Display each bookmark domain below its title." />
+                  </div>
 
-              <div className={`${inputBg} ${inputBorder} rounded-[10px] border p-3`}>
-                <div className={`mx-2 mb-1 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Behavior</div>
-                <SettingToggle id="openLinksInNewTab" title="Open links in new tab" description="Open bookmarks in a new browser tab." />
-                <SettingToggle id="showBookmarkDescriptions" title="Show bookmark descriptions" description="Display each bookmark domain below its title." />
-              </div>
+                  <div className={`${inputBg} ${inputBorder} rounded-[10px] border p-3`}>
+                    <div className={`mx-2 mb-1 border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${modalSubText} ${isDark ? 'border-white/10' : 'border-black/10'}`}>Behavior</div>
+                    <SettingToggle id="openLinksInNewTab" title="Open links in new tab" description="Open bookmarks in a new browser tab." />
+                  </div>
+                </div>
+              )}
+              {settingsTab === 'theme' && <ThemeStudio />}
+              {settingsTab === 'layout' && <LayoutStudio />}
+              {settingsTab === 'accessibility' && <AccessibilityStudio />}
             </div>
           </div>
         </div>
