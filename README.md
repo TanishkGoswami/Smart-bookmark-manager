@@ -57,4 +57,6 @@ On Windows PowerShell, use `npm.cmd run build` or `npm.cmd run lint` if script e
 2. Break the large app component into focused components and hooks.
 3. Add tests for add/edit/delete/restore flows with mocked Chrome APIs.
 4. Add confirmation UI for destructive actions like board deletion and empty trash.
-5. Optimize `public/logo.png`; it is currently large for an extension icon.
+5. Optimize `public/logo.png`; it is currently large for an extension icon..
+
+
